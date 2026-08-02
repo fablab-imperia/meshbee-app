@@ -1,12 +1,23 @@
+import { Platform } from 'react-native';
+import * as Device from 'expo-device';
+
 /**
- * Configurazione API Backend FastAPI
- *
- * Imposta EXPO_PUBLIC_API_URL nel file .env (vedi .env.example)
+ * Calcola la URL base appropriata per il backend in base al dispositivo
  */
+const getBaseUrl = (): string => {
+  if (process.env.EXPO_PUBLIC_API_URL) {
+    return process.env.EXPO_PUBLIC_API_URL;
+  }
+  // Su emulatore Android, localhost punta alla VM interna: usa 10.0.2.2 per raggiungere l'host
+  if (Platform.OS === 'android' && !Device.isDevice) {
+    return 'http://10.0.2.2:8000';
+  }
+  return 'http://localhost:8000';
+};
 
 export const API_CONFIG = {
-  // URL base del backend FastAPI — configurabile tramite variabile d'ambiente
-  BASE_URL: (process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8000'),
+  // URL base del backend FastAPI — configurabile tramite variabile d'ambiente o auto-detect per emulatore
+  BASE_URL: getBaseUrl(),
 
   // Timeout per le richieste (ms)
   TIMEOUT: 30000,
