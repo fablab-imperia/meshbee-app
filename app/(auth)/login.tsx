@@ -1,20 +1,20 @@
+import { useAuth } from '@/contexts/FastAPIAuthContext';
+import { useColorScheme } from '@/hooks/use-color-scheme';
+import { validateEmail } from '@/services/fastapi-auth-service';
+import { useRouter } from 'expo-router';
 import React, { useState } from 'react';
 import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  StyleSheet,
+  ActivityIndicator,
+  Alert,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
-  ActivityIndicator,
-  Alert,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from 'react-native';
-import { useAuth } from '@/contexts/FastAPIAuthContext';
-import { useRouter } from 'expo-router';
-import { useColorScheme } from '@/hooks/use-color-scheme';
-import { validateEmail } from '@/services/fastapi-auth-service';
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
@@ -32,8 +32,20 @@ export default function LoginScreen() {
     textSecondary: isDark ? '#8E8E93' : '#6E6E73',
     primary: '#007AFF',
     error: '#FF3B30',
+    secondary : '#0b8028',
     border: isDark ? '#38383A' : '#C6C6C8',
   };
+
+  function handleLostPassword() {
+    const title = 'Recupero Password';
+    const message =
+      "Per reimpostare o modificare la tua password, contatta l'amministratore di sistema. Solo l'amministratore (Admin) può cambiare la password di un utente.";
+    if (Platform.OS === 'web') {
+      alert(`${title}\n\n${message}`);
+    } else {
+      Alert.alert(title, message);
+    }
+  }
 
   async function handleLogin() {
     // Validazione
@@ -62,10 +74,6 @@ export default function LoginScreen() {
     } finally {
       setLoading(false);
     }
-  }
-
-  function goToRegister() {
-    router.push('/(auth)/register');
   }
 
   return (
@@ -146,31 +154,20 @@ export default function LoginScreen() {
           </TouchableOpacity>
 
           {/* Forgot Password */}
-          <TouchableOpacity style={styles.forgotButton} disabled={loading}>
-            <Text style={[styles.forgotText, { color: colors.primary }]}>
+          <TouchableOpacity  style={[
+              styles.button,
+              { backgroundColor: colors.secondary },
+              loading && styles.buttonDisabled,
+            ]}
+            onPress={handleLostPassword}
+            disabled={loading}>
+            <Text style={styles.buttonText}>
               Password dimenticata?
             </Text>
           </TouchableOpacity>
         </View>
 
-        {/* Divider */}
-        <View style={styles.divider}>
-          <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
-          <Text style={[styles.dividerText, { color: colors.textSecondary }]}>oppure</Text>
-          <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
-        </View>
-
-        {/* Register Link */}
-        <View style={styles.registerContainer}>
-          <Text style={[styles.registerText, { color: colors.textSecondary }]}>
-            Non hai un account?{' '}
-          </Text>
-          <TouchableOpacity onPress={goToRegister} disabled={loading}>
-            <Text style={[styles.registerLink, { color: colors.primary }]}>
-              Registrati
-            </Text>
-          </TouchableOpacity>
-        </View>
+   
       </ScrollView>
     </KeyboardAvoidingView>
   );
