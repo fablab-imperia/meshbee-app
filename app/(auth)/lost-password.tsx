@@ -1,26 +1,17 @@
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { resetPassword, validateEmail } from '@/services/fastapi-auth-service';
 import { useRouter } from 'expo-router';
-import React, { useState } from 'react';
+import React from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    KeyboardAvoidingView,
-    Platform,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 
 export default function LostPasswordScreen() {
-  const [email, setEmail] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [sent, setSent] = useState(false);
-  const [serverError, setServerError] = useState<string | null>(null);
-
   const router = useRouter();
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
@@ -31,48 +22,17 @@ export default function LostPasswordScreen() {
     text: isDark ? '#FFFFFF' : '#000000',
     textSecondary: isDark ? '#8E8E93' : '#6E6E73',
     primary: '#007AFF',
-    error: '#FF3B30',
     border: isDark ? '#38383A' : '#C6C6C8',
-    successBg: isDark ? '#1C3A27' : '#E8F8EE',
-    successText: isDark ? '#4CD964' : '#1E7E34',
-    errorBg: isDark ? '#3A1C1C' : '#FDE8E8',
+    infoBg: isDark ? '#1A2E3B' : '#EBF5FB',
+    infoBorder: isDark ? '#2980B9' : '#3498DB',
   };
 
-  async function handleResetPassword() {
-    setServerError(null);
-
-    if (!email.trim()) {
-      Alert.alert('Campo richiesto', 'Inserisci il tuo indirizzo email.');
-      return;
-    }
-
-    if (!validateEmail(email.trim())) {
-      Alert.alert('Email non valida', 'Inserisci un indirizzo email valido.');
-      return;
-    }
-
-    setLoading(true);
-
-    try {
-      const result = await resetPassword(email.trim());
-
-      if (result.success) {
-        setSent(true);
-      } else {
-        setServerError(
-          result.error ||
-            'Impossibile inviare la richiesta. Riprova più tardi.'
-        );
-      }
-    } catch (error) {
-      setServerError('Si è verificato un errore di rete. Riprova.');
-    } finally {
-      setLoading(false);
-    }
-  }
-
   function goToLogin() {
-    router.back();
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.replace('/(auth)/login');
+    }
   }
 
   return (
@@ -84,96 +44,36 @@ export default function LostPasswordScreen() {
         keyboardShouldPersistTaps="handled">
         {/* Header */}
         <View style={styles.header}>
-          <Text style={styles.icon}>🔑</Text>
+          <Text style={styles.icon}>🔒</Text>
           <Text style={[styles.title, { color: colors.text }]}>
             Recupero Password
           </Text>
           <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
-            {sent
-              ? 'Richiesta inviata con successo'
-              : "Inserisci l'email associata al tuo account per ripristinare la password"}
+            Gestione credenziali di accesso
           </Text>
         </View>
 
-        {sent ? (
-          /* Stato di Successo */
-          <View
-            style={[
-              styles.statusCard,
-              { backgroundColor: colors.successBg, borderColor: colors.successText },
-            ]}>
-            <Text style={[styles.statusTitle, { color: colors.successText }]}>
-              📧 Controlla la tua casella di posta
-            </Text>
-            <Text style={[styles.statusText, { color: colors.text }]}>
-              Abbiamo inviato le istruzioni per reimpostare la password all'indirizzo{' '}
-              <Text style={{ fontWeight: 'bold' }}>{email}</Text>.
-            </Text>
-            <TouchableOpacity
-              style={[styles.button, { backgroundColor: colors.primary, marginTop: 20 }]}
-              onPress={goToLogin}>
-              <Text style={styles.buttonText}>Torna al Login</Text>
-            </TouchableOpacity>
-          </View>
-        ) : (
-          /* Form Richiesta Reset */
-          <View style={styles.form}>
-            {serverError && (
-              <View
-                style={[
-                  styles.statusCard,
-                  { backgroundColor: colors.errorBg, borderColor: colors.error },
-                ]}>
-                <Text style={[styles.statusTitle, { color: colors.error }]}>
-                  ⚠️ Info
-                </Text>
-                <Text style={[styles.statusText, { color: colors.text }]}>
-                  {serverError}
-                </Text>
-              </View>
-            )}
+        {/* Info Card */}
+        <View
+          style={[
+            styles.statusCard,
+            { backgroundColor: colors.infoBg, borderColor: colors.infoBorder },
+          ]}>
+          <Text style={[styles.statusTitle, { color: colors.text }]}>
+            Richiesta all'Amministratore
+          </Text>
+          <Text style={[styles.statusText, { color: colors.text }]}>
+            Per motivi di sicurezza, il cambio o il recupero della password deve essere richiesto direttamente all'amministratore di sistema.
+            {'\n\n'}
+            Solo l'Admin è autorizzato a reimpostare la password di un utente.
+          </Text>
 
-            <View style={styles.inputContainer}>
-              <Text style={[styles.label, { color: colors.text }]}>Email</Text>
-              <TextInput
-                style={[
-                  styles.input,
-                  {
-                    backgroundColor: colors.card,
-                    color: colors.text,
-                    borderColor: colors.border,
-                  },
-                ]}
-                placeholder="tuo@email.com"
-                placeholderTextColor={colors.textSecondary}
-                value={email}
-                onChangeText={setEmail}
-                autoCapitalize="none"
-                keyboardType="email-address"
-                autoComplete="email"
-                editable={!loading}
-              />
-            </View>
-
-            {/* Reset Button */}
-            <TouchableOpacity
-              style={[
-                styles.button,
-                { backgroundColor: colors.primary },
-                loading && styles.buttonDisabled,
-              ]}
-              onPress={handleResetPassword}
-              disabled={loading}>
-              {loading ? (
-                <ActivityIndicator color="#FFFFFF" />
-              ) : (
-                <Text style={styles.buttonText}>Invia Link di Reset</Text>
-              )}
-            </TouchableOpacity>
-
-          
-          </View>
-        )}
+          <TouchableOpacity
+            style={[styles.button, { backgroundColor: colors.primary, marginTop: 24 }]}
+            onPress={goToLogin}>
+            <Text style={styles.buttonText}>Torna al Login</Text>
+          </TouchableOpacity>
+        </View>
       </ScrollView>
     </KeyboardAvoidingView>
   );

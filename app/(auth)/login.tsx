@@ -37,7 +37,14 @@ export default function LoginScreen() {
   };
 
   function handleLostPassword() {
-    router.push('/(auth)/lost-password');
+    const title = 'Recupero Password';
+    const message =
+      "Per reimpostare o modificare la tua password, contatta l'amministratore di sistema. Solo l'amministratore (Admin) può cambiare la password di un utente.";
+    if (Platform.OS === 'web') {
+      alert(`${title}\n\n${message}`);
+    } else {
+      Alert.alert(title, message);
+    }
   }
 
   async function handleLogin() {
@@ -67,10 +74,6 @@ export default function LoginScreen() {
     } finally {
       setLoading(false);
     }
-  }
-
-  function goToRegister() {
-    router.push('/(auth)/register');
   }
 
   return (
