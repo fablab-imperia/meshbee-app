@@ -60,12 +60,12 @@ export default function LostPasswordScreen() {
             { backgroundColor: colors.infoBg, borderColor: colors.infoBorder },
           ]}>
           <Text style={[styles.statusTitle, { color: colors.text }]}>
-            Richiesta all'Amministratore
+            Richiesta all&apos;Amministratore
           </Text>
           <Text style={[styles.statusText, { color: colors.text }]}>
-            Per motivi di sicurezza, il cambio o il recupero della password deve essere richiesto direttamente all'amministratore di sistema.
+            Per motivi di sicurezza, il cambio o il recupero della password deve essere richiesto direttamente all&apos;amministratore di sistema.
             {'\n\n'}
-            Solo l'Admin è autorizzato a reimpostare la password di un utente.
+            Solo l&apos;Admin è autorizzato a reimpostare la password di un utente.
           </Text>
 
           <TouchableOpacity
