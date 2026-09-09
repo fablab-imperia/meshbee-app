@@ -122,6 +122,7 @@ export interface AttivitaResponse {
 export interface AttivitaCreate {
   id_arnia: number;
   tipo_attivita: string;
+  tipo_Attivita?: string;
   descrizione?: string | null;
   timestamp?: string | null;
   dati?: Record<string, any> | null;
@@ -129,6 +130,7 @@ export interface AttivitaCreate {
 
 export interface AttivitaUpdate {
   tipo_attivita?: string;
+  tipo_Attivita?: string;
   descrizione?: string | null;
   timestamp?: string | null;
   dati?: Record<string, any> | null;

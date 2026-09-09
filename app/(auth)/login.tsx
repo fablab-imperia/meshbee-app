@@ -20,10 +20,16 @@ export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
-  const { signIn } = useAuth();
+  const { signIn, user, loading: authLoading } = useAuth();
   const router = useRouter();
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
+
+  React.useEffect(() => {
+    if (!authLoading && user) {
+      router.replace('/(tabs)');
+    }
+  }, [user, authLoading, router]);
 
   const colors = {
     background: isDark ? '#000000' : '#FFFFFF',
@@ -69,7 +75,7 @@ export default function LoginScreen() {
       } else {
         Alert.alert('Errore di Login', result.error || 'Credenziali non valide');
       }
-    } catch (error) {
+    } catch {
       Alert.alert('Errore', 'Si è verificato un errore imprevisto');
     } finally {
       setLoading(false);

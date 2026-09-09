@@ -4,7 +4,7 @@ import React from 'react';
 import { ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 
 interface ItemSelectorProps {
-  items: Array<{ id: string; name: string }>;
+  items: { id: string; name: string }[];
   selectedId: string | null;
   onSelect: (id: string | null) => void;
   showAllOption?: boolean;
