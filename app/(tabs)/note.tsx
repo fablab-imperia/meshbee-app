@@ -28,9 +28,30 @@ import {
 import { BeehiveData } from '@/types/sensors';
 import { AttivitaResponse } from '@/types/api';
 
+export const TIPOLOGIE_ATTIVITA = [
+  { value: 'ispezione', label: 'Ispezione', icon: '🔍' },
+  { value: 'trattamento', label: 'Trattamento', icon: '💊' },
+  { value: 'raccolta_miele', label: 'Raccolta miele', icon: '🍯' },
+  { value: 'nutrizione', label: 'Nutrizione', icon: '🥣' },
+  { value: 'sostituzione_regina', label: 'Sostituzione regina', icon: '👑' },
+  { value: 'controllo_salute', label: 'Controllo salute', icon: '🩺' },
+  { value: 'manutenzione', label: 'Manutenzione', icon: '🔧' },
+  { value: 'altro', label: 'Altro', icon: '📝' },
+] as const;
+
+export function getTipologiaInfo(tipo?: string | null) {
+  if (!tipo) return { label: 'Nota manuale', icon: '📝' };
+  const found = TIPOLOGIE_ATTIVITA.find(
+    (t) => t.value === tipo || t.label.toLowerCase() === tipo.toLowerCase()
+  );
+  if (found) return found;
+  return { label: tipo, icon: '📝' };
+}
+
 interface NoteItemWithHive extends AttivitaResponse {
   hiveName?: string;
   hiveId: string;
+  tipo_Attivita?: string;
 }
 
 export default function NoteScreen() {
@@ -47,6 +68,8 @@ export default function NoteScreen() {
   const [noteText, setNoteText] = useState('');
   const [noteDate, setNoteDate] = useState('');
   const [targetHiveId, setTargetHiveId] = useState<string>('');
+  const [noteType, setNoteType] = useState<string>('ispezione');
+  const [typeDropdownOpen, setTypeDropdownOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [modalError, setModalError] = useState<string | null>(null);
 
@@ -159,6 +182,8 @@ export default function NoteScreen() {
     setNoteText('');
     setNoteDate(new Date().toISOString().slice(0, 16).replace('T', ' '));
     setTargetHiveId(selectedHiveId !== 'all' ? selectedHiveId : beehives[0]?.id || '1');
+    setNoteType('ispezione');
+    setTypeDropdownOpen(false);
     setModalError(null);
     setModalVisible(true);
   };
@@ -170,6 +195,11 @@ export default function NoteScreen() {
       new Date(note.timestamp).toISOString().slice(0, 16).replace('T', ' ')
     );
     setTargetHiveId(note.hiveId);
+    const found = TIPOLOGIE_ATTIVITA.find(
+      (t) => t.value === note.tipo_attivita || t.value === (note as any).tipo_Attivita
+    );
+    setNoteType(found ? found.value : 'altro');
+    setTypeDropdownOpen(false);
     setModalError(null);
     setModalVisible(true);
   };
@@ -194,15 +224,18 @@ export default function NoteScreen() {
         ? new Date().toISOString()
         : parsedDate.toISOString();
 
+      const activityPayload = {
+        descrizione: noteText.trim(),
+        timestamp: timestamp,
+        tipo_attivita: noteType,
+        tipo_Attivita: noteType,
+      };
+
       if (editingNote) {
         const result = await updateBeehiveActivity(
           editingNote.hiveId,
           editingNote.id_log,
-          {
-            descrizione: noteText.trim(),
-            timestamp: timestamp,
-            tipo_attivita: 'Nota manuale',
-          }
+          activityPayload
         );
 
         if (result.success) {
@@ -213,18 +246,20 @@ export default function NoteScreen() {
           setNotes((prev) =>
             prev.map((n) =>
               n.id_log === editingNote.id_log
-                ? { ...n, descrizione: noteText, timestamp: timestamp }
+                ? {
+                    ...n,
+                    descrizione: noteText.trim(),
+                    timestamp: timestamp,
+                    tipo_attivita: noteType,
+                    tipo_Attivita: noteType,
+                  }
                 : n
             )
           );
           setModalVisible(false);
         }
       } else {
-        const result = await createBeehiveActivity(targetHiveId, {
-          descrizione: noteText.trim(),
-          timestamp: timestamp,
-          tipo_attivita: 'Nota manuale',
-        });
+        const result = await createBeehiveActivity(targetHiveId, activityPayload);
 
         if (result.success) {
           setModalVisible(false);
@@ -236,7 +271,8 @@ export default function NoteScreen() {
             id_log: Date.now(),
             id_arnia: parseInt(targetHiveId) || 1,
             id_utente: null,
-            tipo_attivita: 'Nota manuale',
+            tipo_attivita: noteType,
+            tipo_Attivita: noteType,
             descrizione: noteText.trim(),
             timestamp: timestamp,
             dati: null,
@@ -298,6 +334,7 @@ export default function NoteScreen() {
   const cardBg = isDark ? '#1C1C1E' : '#FFFFFF';
   const borderColor = isDark ? '#2C2C2E' : '#E5E7EB';
   const textSecondary = isDark ? '#9CA3AF' : '#6B7280';
+  const selectedTypeInfo = getTipologiaInfo(noteType);
 
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: isDark ? '#111213' : '#F9FAFB' }]} edges={['top']}>
@@ -396,6 +433,7 @@ export default function NoteScreen() {
                 hour: '2-digit',
                 minute: '2-digit',
               });
+              const typeInfo = getTipologiaInfo(note.tipo_attivita || note.tipo_Attivita);
 
               return (
                 <TouchableOpacity
@@ -406,7 +444,7 @@ export default function NoteScreen() {
                   <View style={styles.noteHeader}>
                     <View style={styles.noteTypeTag}>
                       <ThemedText style={styles.noteTypeTagText}>
-                        📝 {note.tipo_attivita || 'Nota manuale'}
+                        {typeInfo.icon} {typeInfo.label}
                       </ThemedText>
                     </View>
                     <ThemedText style={[styles.noteDateTime, { color: textSecondary }]}>
@@ -442,86 +480,171 @@ export default function NoteScreen() {
         onRequestClose={() => setModalVisible(false)}>
         <View style={styles.modalOverlay}>
           <ThemedView style={styles.modalContent}>
-            <ThemedText type="subtitle" style={styles.modalTitle}>
-              {editingNote ? 'Modifica Nota' : 'Nuova Nota'}
-            </ThemedText>
+            <ScrollView
+              style={styles.modalScrollView}
+              contentContainerStyle={styles.modalScrollContent}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}>
+              <ThemedText type="subtitle" style={styles.modalTitle}>
+                {editingNote ? 'Modifica Nota' : 'Nuova Nota'}
+              </ThemedText>
 
-            {modalError && (
-              <View style={styles.errorBanner}>
-                <ThemedText style={styles.errorBannerText}>⚠️ {modalError}</ThemedText>
-              </View>
-            )}
-
-            {/* Target Hive Picker */}
-            <ThemedText style={styles.inputLabel}>Seleziona Arnia</ThemedText>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
-              {beehives.map((b) => (
-                <TouchableOpacity
-                  key={b.id}
-                  style={[
-                    styles.hiveSelectChip,
-                    targetHiveId === b.id && styles.hiveSelectChipActive,
-                  ]}
-                  onPress={() => setTargetHiveId(b.id)}>
-                  <ThemedText
-                    style={[
-                      styles.hiveSelectChipText,
-                      targetHiveId === b.id && styles.hiveSelectChipTextActive,
-                    ]}>
-                    {b.name}
-                  </ThemedText>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-
-            <ThemedText style={styles.inputLabel}>Data e Ora (YYYY-MM-DD HH:MM)</ThemedText>
-            <TextInput
-              style={[styles.modalInput, { color: isDark ? '#FFF' : '#000' }]}
-              value={noteDate}
-              onChangeText={setNoteDate}
-              placeholder="2026-08-26 14:00"
-              placeholderTextColor="#999"
-            />
-
-            <ThemedText style={styles.inputLabel}>Contenuto Nota</ThemedText>
-            <TextInput
-              style={[styles.modalInput, styles.modalTextArea, { color: isDark ? '#FFF' : '#000' }]}
-              value={noteText}
-              onChangeText={setNoteText}
-              placeholder="Descrivi l'intervento effettuato o l'osservazione..."
-              placeholderTextColor="#999"
-              multiline
-              numberOfLines={4}
-            />
-
-            <View style={styles.modalButtons}>
-              <TouchableOpacity
-                style={[styles.btn, styles.cancelBtn]}
-                onPress={() => setModalVisible(false)}
-                disabled={isSubmitting}>
-                <ThemedText style={styles.btnText}>Annulla</ThemedText>
-              </TouchableOpacity>
-
-              {editingNote && (
-                <TouchableOpacity
-                  style={[styles.btn, styles.deleteBtn]}
-                  onPress={handleDeleteNote}
-                  disabled={isSubmitting}>
-                  <ThemedText style={styles.btnText}>Elimina</ThemedText>
-                </TouchableOpacity>
+              {modalError && (
+                <View style={styles.errorBanner}>
+                  <ThemedText style={styles.errorBannerText}>⚠️ {modalError}</ThemedText>
+                </View>
               )}
 
-              <TouchableOpacity
-                style={[styles.btn, styles.saveBtn]}
-                onPress={handleSaveNote}
-                disabled={isSubmitting}>
-                {isSubmitting ? (
-                  <ActivityIndicator color="#FFF" />
-                ) : (
-                  <ThemedText style={styles.btnText}>Salva</ThemedText>
+              {/* Target Hive Picker */}
+              <ThemedText style={styles.inputLabel}>Seleziona Arnia</ThemedText>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
+                {beehives.map((b) => (
+                  <TouchableOpacity
+                    key={b.id}
+                    style={[
+                      styles.hiveSelectChip,
+                      targetHiveId === b.id && styles.hiveSelectChipActive,
+                    ]}
+                    onPress={() => setTargetHiveId(b.id)}>
+                    <ThemedText
+                      style={[
+                        styles.hiveSelectChipText,
+                        targetHiveId === b.id && styles.hiveSelectChipTextActive,
+                      ]}>
+                      {b.name}
+                    </ThemedText>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+
+              {/* Tipologia Dropdown */}
+              <ThemedText style={styles.inputLabel}>Tipologia</ThemedText>
+              <View style={styles.dropdownContainer}>
+                <TouchableOpacity
+                  style={[
+                    styles.dropdownButton,
+                    {
+                      borderColor: typeDropdownOpen ? '#2563EB' : borderColor,
+                      backgroundColor: isDark ? '#1F2937' : '#F9FAFB',
+                    },
+                  ]}
+                  onPress={() => setTypeDropdownOpen((prev) => !prev)}
+                  activeOpacity={0.7}>
+                  <View style={styles.dropdownValueRow}>
+                    <ThemedText style={styles.dropdownValueIcon}>
+                      {selectedTypeInfo.icon}
+                    </ThemedText>
+                    <ThemedText
+                      style={[
+                        styles.dropdownValueText,
+                        { color: isDark ? '#FFFFFF' : '#111827' },
+                      ]}>
+                      {selectedTypeInfo.label}
+                    </ThemedText>
+                  </View>
+                  <Ionicons
+                    name={typeDropdownOpen ? 'chevron-up' : 'chevron-down'}
+                    size={18}
+                    color={isDark ? '#9CA3AF' : '#6B7280'}
+                  />
+                </TouchableOpacity>
+
+                {typeDropdownOpen && (
+                  <View
+                    style={[
+                      styles.dropdownList,
+                      {
+                        backgroundColor: isDark ? '#1F2937' : '#FFFFFF',
+                        borderColor: borderColor,
+                      },
+                    ]}>
+                    {TIPOLOGIE_ATTIVITA.map((item) => {
+                      const isSelected = noteType === item.value;
+                      return (
+                        <TouchableOpacity
+                          key={item.value}
+                          style={[
+                            styles.dropdownItem,
+                            isSelected && {
+                              backgroundColor: isDark ? 'rgba(37, 99, 235, 0.2)' : '#EFF6FF',
+                            },
+                          ]}
+                          onPress={() => {
+                            setNoteType(item.value);
+                            setTypeDropdownOpen(false);
+                          }}>
+                          <View style={styles.dropdownItemContent}>
+                            <ThemedText style={styles.dropdownItemIcon}>{item.icon}</ThemedText>
+                            <ThemedText
+                              style={[
+                                styles.dropdownItemLabel,
+                                { color: isSelected ? '#2563EB' : isDark ? '#F3F4F6' : '#1F2937' },
+                                isSelected && { fontWeight: '700' },
+                              ]}>
+                              {item.label}
+                            </ThemedText>
+                          </View>
+                          {isSelected && <Ionicons name="checkmark" size={18} color="#2563EB" />}
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
                 )}
-              </TouchableOpacity>
-            </View>
+              </View>
+
+              <ThemedText style={styles.inputLabel}>Data e Ora (YYYY-MM-DD HH:MM)</ThemedText>
+              <TextInput
+                style={[styles.modalInput, { color: isDark ? '#FFF' : '#000', borderColor }]}
+                value={noteDate}
+                onChangeText={setNoteDate}
+                placeholder="2026-08-26 14:00"
+                placeholderTextColor="#999"
+              />
+
+              <ThemedText style={styles.inputLabel}>Contenuto Nota</ThemedText>
+              <TextInput
+                style={[
+                  styles.modalInput,
+                  styles.modalTextArea,
+                  { color: isDark ? '#FFF' : '#000', borderColor },
+                ]}
+                value={noteText}
+                onChangeText={setNoteText}
+                placeholder="Descrivi l'intervento effettuato o l'osservazione..."
+                placeholderTextColor="#999"
+                multiline
+                numberOfLines={4}
+              />
+
+              <View style={styles.modalButtons}>
+                <TouchableOpacity
+                  style={[styles.btn, styles.cancelBtn]}
+                  onPress={() => setModalVisible(false)}
+                  disabled={isSubmitting}>
+                  <ThemedText style={styles.btnText}>Annulla</ThemedText>
+                </TouchableOpacity>
+
+                {editingNote && (
+                  <TouchableOpacity
+                    style={[styles.btn, styles.deleteBtn]}
+                    onPress={handleDeleteNote}
+                    disabled={isSubmitting}>
+                    <ThemedText style={styles.btnText}>Elimina</ThemedText>
+                  </TouchableOpacity>
+                )}
+
+                <TouchableOpacity
+                  style={[styles.btn, styles.saveBtn]}
+                  onPress={handleSaveNote}
+                  disabled={isSubmitting}>
+                  {isSubmitting ? (
+                    <ActivityIndicator color="#FFF" />
+                  ) : (
+                    <ThemedText style={styles.btnText}>Salva</ThemedText>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
           </ThemedView>
         </View>
       </Modal>
@@ -621,7 +744,8 @@ const styles = StyleSheet.create({
   },
   modalContent: {
     width: '100%',
-    maxWidth: 420,
+    maxWidth: 440,
+    maxHeight: '88%',
     borderRadius: 18,
     padding: 20,
     shadowColor: '#000',
@@ -629,6 +753,12 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.2,
     shadowRadius: 8,
     elevation: 6,
+  },
+  modalScrollView: {
+    width: '100%',
+  },
+  modalScrollContent: {
+    paddingBottom: 8,
   },
   modalTitle: { marginBottom: 16, textAlign: 'center', fontWeight: '700' },
   errorBanner: {
@@ -651,6 +781,57 @@ const styles = StyleSheet.create({
   hiveSelectChipActive: { backgroundColor: '#2563EB' },
   hiveSelectChipText: { fontSize: 12, fontWeight: '600' },
   hiveSelectChipTextActive: { color: '#FFFFFF' },
+  dropdownContainer: {
+    marginBottom: 14,
+  },
+  dropdownButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    minHeight: 44,
+  },
+  dropdownValueRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  dropdownValueIcon: {
+    fontSize: 16,
+  },
+  dropdownValueText: {
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  dropdownList: {
+    borderWidth: 1,
+    borderRadius: 10,
+    marginTop: 6,
+    overflow: 'hidden',
+  },
+  dropdownItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: 'rgba(150, 150, 150, 0.15)',
+  },
+  dropdownItemContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  dropdownItemIcon: {
+    fontSize: 16,
+  },
+  dropdownItemLabel: {
+    fontSize: 14,
+  },
   modalInput: {
     borderWidth: 1,
     borderColor: '#DDD',

@@ -7,7 +7,6 @@ import {
   AdminTabIcon,
   AllarmiTabIcon,
   ArnieTabIcon,
-  DashboardTabIcon,
   NoteTabIcon,
 } from '@/components/TabIcons';
 import { useAuth } from '@/contexts/FastAPIAuthContext';
@@ -79,19 +78,7 @@ export default function TabLayout() {
           marginTop: 2,
         },
       }}>
-      {/* 1. Dashboard Tab */}
-      <Tabs.Screen
-        name="index"
-        options={{
-          title: 'Dashboard',
-          tabBarLabel: 'Dashboard',
-          tabBarIcon: ({ color, focused }) => (
-            <DashboardTabIcon color={color} focused={focused} size={24} />
-          ),
-        }}
-      />
-
-      {/* 2. Arnie Tab */}
+      {/* 1. Arnie Tab */}
       <Tabs.Screen
         name="arnie"
         options={{
@@ -103,7 +90,7 @@ export default function TabLayout() {
         }}
       />
 
-      {/* 3. Allarmi Tab */}
+      {/* 2. Allarmi Tab */}
       <Tabs.Screen
         name="allarmi"
         options={{
@@ -115,7 +102,7 @@ export default function TabLayout() {
         }}
       />
 
-      {/* 4. Note Tab */}
+      {/* 3. Note Tab */}
       <Tabs.Screen
         name="note"
         options={{
@@ -127,7 +114,7 @@ export default function TabLayout() {
         }}
       />
 
-      {/* 5. Admin Tab (visibile solo agli admin) */}
+      {/* 4. Admin Tab (visibile solo agli admin) */}
       <Tabs.Screen
         name="admin"
         options={{
@@ -140,7 +127,15 @@ export default function TabLayout() {
         }}
       />
 
-      {/* Dettagli route */}
+      {/* Hidden index redirect route */}
+      <Tabs.Screen
+        name="index"
+        options={{
+          href: null,
+        }}
+      />
+
+      {/* Hidden dettagli route */}
       <Tabs.Screen
         name="dettagli"
         options={{

@@ -6,6 +6,7 @@ import {
   Modal,
   Platform,
   Alert,
+  ScrollView,
 } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -50,14 +51,14 @@ export function AppHeader({ title = 'Monitoraggio Arnie' }: AppHeaderProps) {
     setMenuVisible(false);
     try {
       await signOut();
-    } catch {
+    } finally {
       router.replace('/(auth)/login');
     }
   };
 
   const handleLogout = () => {
     if (Platform.OS === 'web') {
-      const confirmed = window.confirm('Sei sicuro di voler uscire?');
+      const confirmed = window.confirm('Sei sicuro di voler effettuare il logout?');
       if (confirmed) handleLogoutAction();
     } else {
       Alert.alert('Logout', 'Sei sicuro di voler uscire dall\'account?', [
@@ -105,10 +106,15 @@ export function AppHeader({ title = 'Monitoraggio Arnie' }: AppHeaderProps) {
         transparent={true}
         visible={menuVisible}
         onRequestClose={() => setMenuVisible(false)}>
-        <TouchableOpacity
-          style={styles.modalOverlay}
-          activeOpacity={1}
-          onPress={() => setMenuVisible(false)}>
+        <View style={styles.modalOverlay}>
+          {/* Backdrop clickable to close */}
+          <TouchableOpacity
+            style={StyleSheet.absoluteFill}
+            activeOpacity={1}
+            onPress={() => setMenuVisible(false)}
+            accessibilityLabel="Chiudi menu"
+          />
+
           <SafeAreaView style={styles.menuContainer}>
             <ThemedView style={styles.menuContent}>
               <View style={styles.menuHeader}>
@@ -132,7 +138,8 @@ export function AppHeader({ title = 'Monitoraggio Arnie' }: AppHeaderProps) {
                 </View>
                 <TouchableOpacity
                   onPress={() => setMenuVisible(false)}
-                  style={styles.closeButton}>
+                  style={styles.closeButton}
+                  accessibilityLabel="Chiudi">
                   <Ionicons
                     name="close"
                     size={22}
@@ -143,73 +150,74 @@ export function AppHeader({ title = 'Monitoraggio Arnie' }: AppHeaderProps) {
 
               <View style={styles.divider} />
 
-              <View style={styles.menuItems}>
-                <TouchableOpacity
-                  style={styles.menuItem}
-                  onPress={() => {
-                    setMenuVisible(false);
-                    router.push('/(tabs)');
-                  }}>
-                  <Ionicons name="home-outline" size={20} color="#2563EB" />
-                  <ThemedText style={styles.menuItemText}>Dashboard</ThemedText>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={styles.menuItem}
-                  onPress={() => {
-                    setMenuVisible(false);
-                    router.push('/(tabs)/arnie' as any);
-                  }}>
-                  <Ionicons name="layers-outline" size={20} color="#2563EB" />
-                  <ThemedText style={styles.menuItemText}>Arnie & Grafici</ThemedText>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={styles.menuItem}
-                  onPress={() => {
-                    setMenuVisible(false);
-                    router.push('/(tabs)/allarmi' as any);
-                  }}>
-                  <Ionicons name="notifications-outline" size={20} color="#2563EB" />
-                  <ThemedText style={styles.menuItemText}>Allarmi</ThemedText>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={styles.menuItem}
-                  onPress={() => {
-                    setMenuVisible(false);
-                    router.push('/(tabs)/note' as any);
-                  }}>
-                  <Ionicons name="document-text-outline" size={20} color="#2563EB" />
-                  <ThemedText style={styles.menuItemText}>Note & Attività</ThemedText>
-                </TouchableOpacity>
-
-                {(user?.ruolo?.toLowerCase() === 'admin' ||
-                  user?.ruolo?.toLowerCase() === 'amministratore' ||
-                  user?.email?.toLowerCase().includes('admin')) && (
+              <ScrollView style={styles.menuScrollArea} showsVerticalScrollIndicator={false}>
+                <View style={styles.menuItems}>
                   <TouchableOpacity
                     style={styles.menuItem}
                     onPress={() => {
                       setMenuVisible(false);
-                      router.push('/(tabs)/admin' as any);
+                      router.push('/(tabs)/arnie' as any);
                     }}>
-                    <Ionicons name="settings-outline" size={20} color="#2563EB" />
-                    <ThemedText style={styles.menuItemText}>Amministrazione</ThemedText>
+                    <Ionicons name="archive-outline" size={20} color="#2563EB" />
+                    <ThemedText style={styles.menuItemText}>Arnie</ThemedText>
                   </TouchableOpacity>
-                )}
-              </View>
+
+                  <TouchableOpacity
+                    style={styles.menuItem}
+                    onPress={() => {
+                      setMenuVisible(false);
+                      router.push('/(tabs)/allarmi' as any);
+                    }}>
+                    <Ionicons name="notifications-outline" size={20} color="#2563EB" />
+                    <ThemedText style={styles.menuItemText}>Allarmi</ThemedText>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={styles.menuItem}
+                    onPress={() => {
+                      setMenuVisible(false);
+                      router.push('/(tabs)/note' as any);
+                    }}>
+                    <Ionicons name="document-text-outline" size={20} color="#2563EB" />
+                    <ThemedText style={styles.menuItemText}>Note & Attività</ThemedText>
+                  </TouchableOpacity>
+
+                  {(user?.ruolo?.toLowerCase() === 'admin' ||
+                    user?.ruolo?.toLowerCase() === 'amministratore' ||
+                    user?.email?.toLowerCase().includes('admin')) && (
+                    <TouchableOpacity
+                      style={styles.menuItem}
+                      onPress={() => {
+                        setMenuVisible(false);
+                        router.push('/(tabs)/admin' as any);
+                      }}>
+                      <Ionicons name="settings-outline" size={20} color="#2563EB" />
+                      <ThemedText style={styles.menuItemText}>Amministrazione</ThemedText>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              </ScrollView>
 
               <View style={styles.divider} />
 
+              {/* Pulsante Logout */}
               <TouchableOpacity
-                style={styles.logoutButton}
-                onPress={handleLogout}>
-                <Ionicons name="log-out-outline" size={20} color="#EF4444" />
-                <ThemedText style={styles.logoutText}>Disconnetti</ThemedText>
+                style={[
+                  styles.logoutButton,
+                  {
+                    backgroundColor: isDark ? 'rgba(239, 68, 68, 0.12)' : '#FEF2F2',
+                    borderColor: isDark ? 'rgba(239, 68, 68, 0.3)' : '#FECACA',
+                  },
+                ]}
+                onPress={handleLogout}
+                activeOpacity={0.7}
+                accessibilityLabel="Logout">
+                <Ionicons name="log-out-outline" size={22} color="#DC2626" />
+                <ThemedText style={styles.logoutText}>Logout</ThemedText>
               </TouchableOpacity>
             </ThemedView>
           </SafeAreaView>
-        </TouchableOpacity>
+        </View>
       </Modal>
     </>
   );
@@ -351,18 +359,23 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '500',
   },
+  menuScrollArea: {
+    flex: 1,
+  },
   logoutButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 8,
-    borderRadius: 8,
-    gap: 12,
-    marginTop: 'auto',
+    justifyContent: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    gap: 10,
+    marginTop: 8,
   },
   logoutText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#EF4444',
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#DC2626',
   },
 });
