@@ -31,6 +31,27 @@ export interface UserResponse {
   attivo: boolean;
 }
 
+export interface UserCreate {
+  email: string;
+  nome: string;
+  cognome: string;
+  password: string;
+  ruolo?: string;
+}
+
+export interface UserUpdate {
+  email?: string | null;
+  nome?: string | null;
+  cognome?: string | null;
+  ruolo?: string | null;
+  attivo?: boolean | null;
+}
+
+export interface PasswordChange {
+  new_password: string;
+  current_password?: string | null;
+}
+
 // ============================================================================
 // Arnie
 // ============================================================================

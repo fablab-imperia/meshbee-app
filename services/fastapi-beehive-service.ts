@@ -31,9 +31,9 @@ function mapArniaToBeehive(arnia: ArniaConStato): BeehiveData {
     weight: [],
     temperature: [],
     humidity: [],
-    currentWeight: arnia.ultimo_peso ? parseFloat(arnia.ultimo_peso) : 0,
-    currentTemperature: arnia.ultima_temperatura ? parseFloat(arnia.ultima_temperatura) : 0,
-    currentHumidity: arnia.ultima_umidita ? parseFloat(arnia.ultima_umidita) : 0,
+    currentWeight: arnia.ultimo_peso ? parseFloat(arnia.ultimo_peso) : NaN,
+    currentTemperature: arnia.ultima_temperatura ? parseFloat(arnia.ultima_temperatura) : NaN,
+    currentHumidity: arnia.ultima_umidita ? parseFloat(arnia.ultima_umidita) : NaN,
     lastUpdate: arnia.ultimo_aggiornamento ? new Date(arnia.ultimo_aggiornamento) : undefined,
   };
 }
