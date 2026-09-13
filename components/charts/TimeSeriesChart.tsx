@@ -34,7 +34,6 @@ export function TimeSeriesChart({
   const chartWidth = screenWidth - 64;
   const chartHeight = 220;
   const horizontalPadding = 45; // Based on react-native-chart-kit typical layout
-  const verticalPadding = 20;
 
   // Ordina i dati per timestamp
   const sortedData = useMemo(() => {
