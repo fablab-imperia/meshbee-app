@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo, useCallback } from 'react';
+import React, { useEffect, useState, useMemo, useCallback, createElement } from 'react';
 import {
   ScrollView,
   StyleSheet,
@@ -25,6 +25,7 @@ import Svg, {
   Line as SvgLine,
   G,
 } from 'react-native-svg';
+import { WebView } from 'react-native-webview';
 import { useRouter } from 'expo-router';
 
 import { AppHeader } from '@/components/AppHeader';
@@ -73,10 +74,13 @@ export default function ArnieScreen() {
   const [optionsMenuVisible, setOptionsMenuVisible] = useState(false);
   const [noteModalVisible, setNoteModalVisible] = useState(false);
   const [detailsModalVisible, setDetailsModalVisible] = useState(false);
+  const [noteDetailVisible, setNoteDetailVisible] = useState(false);
+  const [selectedActivity, setSelectedActivity] = useState<AttivitaResponse | null>(null);
 
   // Note form state
   const [noteText, setNoteText] = useState('');
-  const [noteDate, setNoteDate] = useState('');
+  const [selectedTime, setSelectedTime] = useState<Date>(new Date());
+  const [calendarMonth, setCalendarMonth] = useState<Date>(new Date());
   const [noteType, setNoteType] = useState<string>('ispezione');
   const [typeDropdownOpen, setTypeDropdownOpen] = useState(false);
   const [isSubmittingNote, setIsSubmittingNote] = useState(false);
@@ -141,6 +145,9 @@ export default function ArnieScreen() {
             currentWeight: 42.4,
             currentHumidity: 65,
             lastUpdate: today1400,
+            latitude: 43.8882,
+            longitude: 8.0288,
+            location: 'Imperia, terrazzo sud',
           },
           {
             id: '2',
@@ -153,6 +160,9 @@ export default function ArnieScreen() {
             currentWeight: 38.7,
             currentHumidity: 61,
             lastUpdate: today1355,
+            latitude: 43.891,
+            longitude: 8.024,
+            location: 'Imperia, oliveto nord',
           },
           {
             id: '3',
@@ -165,6 +175,9 @@ export default function ArnieScreen() {
             currentWeight: 41.8,
             currentHumidity: 66,
             lastUpdate: new Date(Date.now() - 3600000 * 3),
+            latitude: 43.8925,
+            longitude: 8.032,
+            location: 'Imperia, frutteto est',
           },
         ]);
         setSelectedHiveId('1');
@@ -310,21 +323,23 @@ export default function ArnieScreen() {
   // Filter series by time range
   const filteredSeries = useMemo(() => {
     if (!chartSeries || chartSeries.length === 0) return [];
-    const now = Date.now();
+    const timeSeries = [...chartSeries].sort(
+      (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    );
+    if (selectedRange === 'Tutto') return timeSeries;
+    const lastTs = new Date(timeSeries[timeSeries.length - 1].timestamp).getTime();
     let hours = 24;
     if (selectedRange === '7 giorni') hours = 24 * 7;
     if (selectedRange === '30 giorni') hours = 24 * 30;
-    if (selectedRange === 'Tutto') hours = 24 * 365;
 
-    const cutoff = now - hours * 3600 * 1000;
-    const filtered = chartSeries.filter((p) => new Date(p.timestamp).getTime() >= cutoff);
-    return filtered.length > 0 ? filtered : chartSeries;
+    const cutoff = lastTs - hours * 3600 * 1000;
+    return timeSeries.filter((p) => new Date(p.timestamp).getTime() >= cutoff);
   }, [chartSeries, selectedRange]);
 
   // Metric stats (min, avg, max)
   const stats = useMemo(() => {
     if (!filteredSeries || filteredSeries.length === 0) {
-      return { min: 33.8, avg: 34.2, max: 34.5 };
+      return { min: null, avg: null, max: null };
     }
     const values = filteredSeries.map((s) => s.value);
     const min = Math.min(...values);
@@ -346,8 +361,8 @@ export default function ArnieScreen() {
 
     setIsSubmittingNote(true);
     try {
-      const parsedDate = noteDate.trim()
-        ? new Date(noteDate.replace(' ', 'T')).toISOString()
+      const parsedDate = !isNaN(selectedTime.getTime())
+        ? selectedTime.toISOString()
         : new Date().toISOString();
 
       await createBeehiveActivity(currentHive.id, {
@@ -387,6 +402,48 @@ export default function ArnieScreen() {
   const textSecondary = isDark ? '#9CA3AF' : '#6B7280';
   const boxBg = isDark ? '#252528' : '#F8FAFC';
   const noteTypeInfo = getTipologiaInfo(noteType);
+
+  const changeMonth = (delta: number) => {
+    setCalendarMonth((prev) => new Date(prev.getFullYear(), prev.getMonth() + delta, 1));
+  };
+
+  const changeHour = (delta: number) => {
+    setSelectedTime((prev) => {
+      const nd = new Date(prev);
+      nd.setHours(prev.getHours() + delta);
+      return nd;
+    });
+  };
+
+  const changeMinute = (delta: number) => {
+    setSelectedTime((prev) => {
+      const nd = new Date(prev);
+      nd.setMinutes(prev.getMinutes() + delta);
+      return nd;
+    });
+  };
+
+  const isSameDay = (a: Date, b: Date) =>
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate();
+
+  const calendarDays = useMemo(() => {
+    const year = calendarMonth.getFullYear();
+    const month = calendarMonth.getMonth();
+    const firstWeekday = (new Date(year, month, 1).getDay() + 6) % 7;
+    const cells: (Date | null)[] = [];
+    for (let i = 0; i < firstWeekday; i++) cells.push(null);
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    for (let d = 1; d <= daysInMonth; d++) cells.push(new Date(year, month, d));
+    while (cells.length % 7 !== 0) cells.push(null);
+    return cells;
+  }, [calendarMonth]);
+
+  const formattedDateTime =
+    selectedTime.toLocaleDateString('it-IT', { day: '2-digit', month: 'long', year: 'numeric' }) +
+    ' • ' +
+    selectedTime.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
 
   // SVG Chart Dimensions & Helpers
   const chartWidth = Math.max(screenWidth - 64, 300);
@@ -432,6 +489,57 @@ export default function ArnieScreen() {
 
     return { linePath: d, areaPath: area };
   }, [chartPoints, chartHeight]);
+
+  // Dynamic X axis labels based on the filtered time range
+  const xAxisLabels = useMemo(() => {
+    if (!filteredSeries || filteredSeries.length === 0) return ['', '', ''];
+    const format = (ts: Date | string | number) => {
+      const d = new Date(ts);
+      const date = d.toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit' });
+      if (selectedRange === '30 giorni' || selectedRange === 'Tutto') return date;
+      const time = d.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+      return `${date} ${time}`;
+    };
+    const mid = Math.floor((filteredSeries.length - 1) / 2);
+    return [
+      format(filteredSeries[0].timestamp),
+      format(filteredSeries[mid].timestamp),
+      format(filteredSeries[filteredSeries.length - 1].timestamp),
+    ];
+  }, [filteredSeries, selectedRange]);
+
+  const formatActivityDate = useCallback((ts: string): string => {
+    const d = new Date(ts);
+    if (isNaN(d.getTime())) return '—';
+    const date = d.toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    const time = d.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+    return `${date} ${time}`;
+  }, []);
+
+  const openNoteDetail = useCallback((note: AttivitaResponse) => {
+    setSelectedActivity(note);
+    setNoteDetailVisible(true);
+  }, []);
+
+  // Positions of the hive notes mapped onto the chart by their timestamp
+  const noteMarkers = useMemo(() => {
+    if (!activities || activities.length === 0 || filteredSeries.length === 0) return [];
+    const firstTs = new Date(filteredSeries[0].timestamp).getTime();
+    const lastTs = new Date(filteredSeries[filteredSeries.length - 1].timestamp).getTime();
+    const span = lastTs - firstTs;
+    if (!isFinite(firstTs) || !isFinite(lastTs) || span <= 0) return [];
+    const plotWidth = chartWidth - paddingX * 2;
+    const markers: { x: number; y: number; note: AttivitaResponse }[] = [];
+    for (const note of activities) {
+      if (!note.timestamp) continue;
+      const ts = new Date(note.timestamp).getTime();
+      if (!isFinite(ts) || ts < firstTs || ts > lastTs) continue;
+      const ratio = (ts - firstTs) / span;
+      const x = Math.max(paddingX, Math.min(chartWidth - paddingX, paddingX + ratio * plotWidth));
+      markers.push({ x, y: 26, note });
+    }
+    return markers;
+  }, [activities, filteredSeries, chartWidth]);
 
   // Detail view status
   const isWeightDrop =
@@ -634,7 +742,7 @@ export default function ArnieScreen() {
                     {/* Measurement 2: Peso */}
                     <View style={[styles.measureBox, { backgroundColor: boxBg }]}>
                       <View style={styles.measureValRow}>
-                        <MaterialCommunityIcons name="scale" size={16} color="#0D9488" style={{ marginRight: 4 }} />
+                        <MaterialCommunityIcons name="scale" size={14} color="#0D9488" style={{ marginRight: 4 }} />
                         <ThemedText style={styles.measureVal}>
                           {hive.currentWeight != null ? hive.currentWeight.toFixed(1) : '42.4'}
                         </ThemedText>
@@ -787,9 +895,63 @@ export default function ArnieScreen() {
               </View>
             </View>
 
-            {/* 3 Metric Cards Row (Temperatura, Peso, Umidità) */}
+            {/* Posizione su mappa */}
+            <View style={[styles.chartCard, { backgroundColor: cardBg, borderColor }]}>
+              <ThemedText style={styles.chartTitle}>Posizione</ThemedText>
+              {currentHive?.latitude != null &&
+              currentHive?.longitude != null &&
+              isFinite(currentHive.latitude) &&
+              isFinite(currentHive.longitude) ? (
+                <>
+                  <BeehiveMap latitude={currentHive.latitude} longitude={currentHive.longitude} />
+                  <ThemedText style={[styles.mapAttribution, { color: textSecondary }]}>
+                    © OpenStreetMap contributors
+                  </ThemedText>
+                  {currentHive.location ? (
+                    <View style={styles.locationRow}>
+                      <Ionicons name="location-outline" size={14} color="#2563EB" />
+                      <ThemedText style={[styles.locationText, { color: textSecondary }]}>
+                        {currentHive.location}
+                      </ThemedText>
+                    </View>
+                  ) : null}
+                </>
+              ) : (
+                <View style={styles.noLocationBox}>
+                  <Ionicons name="map-outline" size={28} color="#9CA3AF" />
+                  <ThemedText style={[styles.noLocationText, { color: textSecondary }]}>
+                    {currentHive?.location || 'Posizione non disponibile'}
+                  </ThemedText>
+                </View>
+              )}
+            </View>
+
+            {/* 3 Metric Cards Row (Peso, Temperatura, Umidità) */}
             <View style={styles.metricCardsRow}>
-              {/* Card 1: Temperatura */}
+              {/* Card 1: Peso */}
+              <TouchableOpacity
+                style={[
+                  styles.metricCard,
+                  { backgroundColor: cardBg, borderColor },
+                  selectedMetric === 'weight' && styles.metricCardActive,
+                ]}
+                onPress={() => setSelectedMetric('weight')}
+                activeOpacity={0.8}>
+                <View style={[styles.sensorIconCircle, { backgroundColor: '#CCFBF1' }]}>
+                  <MaterialCommunityIcons name="scale" size={18} color="#0D9488" />
+                </View>
+                <View style={styles.metricCardValueRow}>
+                  <ThemedText style={styles.metricCardValue}>
+                    {currentHive?.currentWeight != null ? currentHive.currentWeight.toFixed(1) : '42.4'}
+                  </ThemedText>
+                  <ThemedText style={[styles.metricCardUnit, { color: textSecondary }]}>kg</ThemedText>
+                </View>
+                <ThemedText style={[styles.metricCardLabel, { color: textSecondary }]}>
+                  Peso
+                </ThemedText>
+              </TouchableOpacity>
+
+              {/* Card 2: Temperatura */}
               <TouchableOpacity
                 style={[
                   styles.metricCard,
@@ -809,29 +971,6 @@ export default function ArnieScreen() {
                 </View>
                 <ThemedText style={[styles.metricCardLabel, { color: textSecondary }]}>
                   Temperatura
-                </ThemedText>
-              </TouchableOpacity>
-
-              {/* Card 2: Peso */}
-              <TouchableOpacity
-                style={[
-                  styles.metricCard,
-                  { backgroundColor: cardBg, borderColor },
-                  selectedMetric === 'weight' && styles.metricCardActive,
-                ]}
-                onPress={() => setSelectedMetric('weight')}
-                activeOpacity={0.8}>
-                <View style={[styles.sensorIconCircle, { backgroundColor: '#CCFBF1' }]}>
-                  <MaterialCommunityIcons name="scale" size={20} color="#0D9488" />
-                </View>
-                <View style={styles.metricCardValueRow}>
-                  <ThemedText style={styles.metricCardValue}>
-                    {currentHive?.currentWeight != null ? currentHive.currentWeight.toFixed(1) : '42.4'}
-                  </ThemedText>
-                  <ThemedText style={[styles.metricCardUnit, { color: textSecondary }]}>kg</ThemedText>
-                </View>
-                <ThemedText style={[styles.metricCardLabel, { color: textSecondary }]}>
-                  Peso
                 </ThemedText>
               </TouchableOpacity>
 
@@ -894,9 +1033,19 @@ export default function ArnieScreen() {
                   : 'Andamento umidità'}
               </ThemedText>
 
+              {filteredSeries.length === 0 ? (
+                <View style={styles.noDataContainer}>
+                  <Ionicons name="cloud-offline-outline" size={34} color="#9CA3AF" />
+                  <ThemedText style={[styles.noDataText, { color: textSecondary }]}>
+                    Nessun dato nel periodo selezionato
+                  </ThemedText>
+                </View>
+              ) : (
+                <>
               {/* SVG Smooth Curve Graph */}
               <View style={styles.svgGraphContainer}>
-                <Svg width={chartWidth} height={chartHeight}>
+                <View style={[styles.chartPlotWrap, { width: chartWidth }]}>
+                  <Svg width={chartWidth} height={chartHeight}>
                   <Defs>
                     <SvgGradient id="chartGradient" x1="0" y1="0" x2="0" y2="1">
                       <Stop
@@ -959,36 +1108,77 @@ export default function ArnieScreen() {
                       strokeWidth="1.5"
                     />
                   ))}
+
+                  {/* Vertical guides for note timestamps */}
+                  {noteMarkers.map((m) => (
+                    <SvgLine
+                      key={`guide-${m.note.id_log}`}
+                      x1={m.x}
+                      y1={m.y}
+                      x2={m.x}
+                      y2={chartHeight - paddingY}
+                      stroke="#3B82F6"
+                      strokeWidth="1.5"
+                      strokeDasharray="4 4"
+                      opacity="0.8"
+                    />
+                  ))}
                 </Svg>
+
+                {/* Note markers clickable overlay */}
+                {noteMarkers.map((m) => (
+                  <TouchableOpacity
+                    key={`marker-${m.note.id_log}`}
+                    style={[styles.noteMarker, { left: m.x - 11, top: m.y - 10 }]}
+                    onPress={() => openNoteDetail(m.note)}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    activeOpacity={0.7}
+                    accessibilityLabel={`Nota: ${getTipologiaInfo(m.note.tipo_attivita).label}`}>
+                    <ThemedText style={styles.noteMarkerIcon}>
+                      {getTipologiaInfo(m.note.tipo_attivita).icon}
+                    </ThemedText>
+                  </TouchableOpacity>
+                ))}
+                </View>
               </View>
 
               {/* X Axis Timestamps */}
               <View style={styles.xAxisRow}>
-                <ThemedText style={[styles.xAxisText, { color: textSecondary }]}>01/08 14:00</ThemedText>
-                <ThemedText style={[styles.xAxisText, { color: textSecondary }]}>01/08 02:00</ThemedText>
-                <ThemedText style={[styles.xAxisText, { color: textSecondary }]}>01/08 14:00</ThemedText>
+                {xAxisLabels.map((label, i) => (
+                  <ThemedText key={i} style={[styles.xAxisText, { color: textSecondary }]}>
+                    {label}
+                  </ThemedText>
+                ))}
               </View>
+              </>
+              )}
 
               {/* Stats Summary Row (Min, Media, Max) */}
               <View style={styles.statsSummaryRow}>
                 <View style={styles.statCol}>
                   <ThemedText style={[styles.statLabel, { color: textSecondary }]}>Min</ThemedText>
                   <ThemedText style={styles.statValue}>
-                    {stats.min} {selectedMetric === 'temperature' ? '°C' : selectedMetric === 'weight' ? 'kg' : '%'}
+                    {stats.min != null
+                      ? `${stats.min} ${selectedMetric === 'temperature' ? '°C' : selectedMetric === 'weight' ? 'kg' : '%'}`
+                      : 'N/D'}
                   </ThemedText>
                 </View>
 
                 <View style={styles.statCol}>
                   <ThemedText style={[styles.statLabel, { color: textSecondary }]}>Media</ThemedText>
                   <ThemedText style={styles.statValue}>
-                    {stats.avg} {selectedMetric === 'temperature' ? '°C' : selectedMetric === 'weight' ? 'kg' : '%'}
+                    {stats.avg != null
+                      ? `${stats.avg} ${selectedMetric === 'temperature' ? '°C' : selectedMetric === 'weight' ? 'kg' : '%'}`
+                      : 'N/D'}
                   </ThemedText>
                 </View>
 
                 <View style={styles.statCol}>
                   <ThemedText style={[styles.statLabel, { color: textSecondary }]}>Max</ThemedText>
                   <ThemedText style={styles.statValue}>
-                    {stats.max} {selectedMetric === 'temperature' ? '°C' : selectedMetric === 'weight' ? 'kg' : '%'}
+                    {stats.max != null
+                      ? `${stats.max} ${selectedMetric === 'temperature' ? '°C' : selectedMetric === 'weight' ? 'kg' : '%'}`
+                      : 'N/D'}
                   </ThemedText>
                 </View>
               </View>
@@ -1003,9 +1193,15 @@ export default function ArnieScreen() {
             </View>
 
             {activities.length > 0 ? (
-              <View style={[styles.recentNoteCard, { backgroundColor: cardBg, borderColor }]}>
+              <TouchableOpacity
+                style={[styles.recentNoteCard, { backgroundColor: cardBg, borderColor }]}
+                onPress={() => openNoteDetail(activities[0])}
+                activeOpacity={0.7}>
                 <View style={styles.recentNoteHeader}>
-                  <ThemedText style={styles.recentNoteTag}>📝 {activities[0].tipo_attivita || 'Nota manuale'}</ThemedText>
+                  <ThemedText style={styles.recentNoteTag}>
+                    {getTipologiaInfo(activities[0].tipo_attivita).icon}{' '}
+                    {getTipologiaInfo(activities[0].tipo_attivita).label}
+                  </ThemedText>
                   <ThemedText style={[styles.recentNoteDate, { color: textSecondary }]}>
                     {new Date(activities[0].timestamp).toLocaleDateString('it-IT', { day: '2-digit', month: 'short' })}
                   </ThemedText>
@@ -1013,7 +1209,7 @@ export default function ArnieScreen() {
                 <ThemedText style={styles.recentNoteDesc} numberOfLines={2}>
                   {activities[0].descrizione}
                 </ThemedText>
-              </View>
+              </TouchableOpacity>
             ) : null}
 
             {/* Bottom Action Buttons Row */}
@@ -1021,7 +1217,9 @@ export default function ArnieScreen() {
               <TouchableOpacity
                 style={styles.addNoteMainBtn}
                 onPress={() => {
-                  setNoteDate(new Date().toISOString().slice(0, 16).replace('T', ' '));
+                  const now = new Date();
+                  setSelectedTime(now);
+                  setCalendarMonth(new Date(now.getFullYear(), now.getMonth(), 1));
                   setNoteText('');
                   setNoteType('ispezione');
                   setTypeDropdownOpen(false);
@@ -1286,14 +1484,108 @@ export default function ArnieScreen() {
               )}
             </View>
 
-            <ThemedText style={styles.inputFieldLabel}>Data e ora</ThemedText>
-            <TextInput
-              style={[styles.textInputStyle, { color: isDark ? '#FFF' : '#000' }]}
-              value={noteDate}
-              onChangeText={setNoteDate}
-              placeholder="YYYY-MM-DD HH:MM"
-              placeholderTextColor="#9CA3AF"
-            />
+            <ThemedText style={styles.inputFieldLabel}>Data</ThemedText>
+            <View style={[styles.calendarCard, { borderColor }]}>
+              <View style={styles.calendarHeader}>
+                <TouchableOpacity
+                  onPress={() => changeMonth(-1)}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                  <Ionicons name="chevron-back" size={18} color="#2563EB" />
+                </TouchableOpacity>
+                <ThemedText style={styles.calendarMonthLabel}>
+                  {calendarMonth.toLocaleDateString('it-IT', { month: 'long', year: 'numeric' })}
+                </ThemedText>
+                <TouchableOpacity
+                  onPress={() => changeMonth(1)}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                  <Ionicons name="chevron-forward" size={18} color="#2563EB" />
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.calendarWeekRow}>
+                {['L', 'M', 'M', 'G', 'V', 'S', 'D'].map((w, i) => (
+                  <ThemedText key={`wd-${i}`} style={[styles.calendarWeekHeader, { color: textSecondary }]}>
+                    {w}
+                  </ThemedText>
+                ))}
+              </View>
+
+              <View style={styles.calendarGrid}>
+                {calendarDays.map((day, i) => {
+                  const isSelected = day && isSameDay(day, selectedTime);
+                  const isToday = day && isSameDay(day, new Date());
+                  return (
+                    <View key={i} style={styles.calendarDayCell}>
+                      {day ? (
+                        <TouchableOpacity
+                          style={[
+                            styles.calendarDayBtn,
+                            isSelected && styles.calendarDayBtnActive,
+                          ]}
+                          onPress={() => {
+                            const nd = new Date(selectedTime);
+                            nd.setFullYear(day.getFullYear(), day.getMonth(), day.getDate());
+                            setSelectedTime(nd);
+                          }}>
+                          <ThemedText
+                            style={[
+                              styles.calendarDayText,
+                              isSelected && styles.calendarDayTextActive,
+                              isToday && !isSelected && { color: '#2563EB', fontWeight: '800' },
+                            ]}>
+                            {day.getDate()}
+                          </ThemedText>
+                        </TouchableOpacity>
+                      ) : null}
+                    </View>
+                  );
+                })}
+              </View>
+            </View>
+
+            <ThemedText style={[styles.inputFieldLabel, { marginTop: 12 }]}>Ora</ThemedText>
+            <View style={styles.timePickerRow}>
+              <View style={[styles.timeStepper, { borderColor }]}>
+                <TouchableOpacity
+                  onPress={() => changeHour(1)}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  style={styles.timeStepBtn}>
+                  <Ionicons name="chevron-up" size={16} color="#2563EB" />
+                </TouchableOpacity>
+                <ThemedText style={styles.timeValue}>
+                  {String(selectedTime.getHours()).padStart(2, '0')}
+                </ThemedText>
+                <TouchableOpacity
+                  onPress={() => changeHour(-1)}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  style={styles.timeStepBtn}>
+                  <Ionicons name="chevron-down" size={16} color="#2563EB" />
+                </TouchableOpacity>
+              </View>
+              <ThemedText style={styles.timeColon}>:</ThemedText>
+              <View style={[styles.timeStepper, { borderColor }]}>
+                <TouchableOpacity
+                  onPress={() => changeMinute(1)}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  style={styles.timeStepBtn}>
+                  <Ionicons name="chevron-up" size={16} color="#2563EB" />
+                </TouchableOpacity>
+                <ThemedText style={styles.timeValue}>
+                  {String(selectedTime.getMinutes()).padStart(2, '0')}
+                </ThemedText>
+                <TouchableOpacity
+                  onPress={() => changeMinute(-1)}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  style={styles.timeStepBtn}>
+                  <Ionicons name="chevron-down" size={16} color="#2563EB" />
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            <View style={[styles.dateSummaryBox, { backgroundColor: cardBg, borderColor }]}>
+              <Ionicons name="calendar-outline" size={16} color="#2563EB" />
+              <ThemedText style={styles.dateSummaryText}>{formattedDateTime}</ThemedText>
+            </View>
 
             <ThemedText style={styles.inputFieldLabel}>Nota</ThemedText>
             <TextInput
@@ -1374,7 +1666,107 @@ export default function ArnieScreen() {
           </ThemedView>
         </View>
       </Modal>
+
+      {/* ========================================================================= */}
+      {/* MODAL 6: DETTAGLIO NOTA (from chart marker)                                */}
+      {/* ========================================================================= */}
+      <Modal
+        animationType="slide"
+        transparent={true}
+        visible={noteDetailVisible}
+        onRequestClose={() => setNoteDetailVisible(false)}>
+        <View style={styles.modalOverlay}>
+          <ThemedView style={styles.noteModalCard}>
+            <ThemedText style={styles.modalTitleText}>Dettaglio Nota</ThemedText>
+
+            <View style={styles.detailRow}>
+              <ThemedText style={[styles.detailLabel, { color: textSecondary }]}>Tipologia:</ThemedText>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <ThemedText style={{ fontSize: 16 }}>
+                  {getTipologiaInfo(selectedActivity?.tipo_attivita).icon}
+                </ThemedText>
+                <ThemedText style={styles.detailVal}>
+                  {getTipologiaInfo(selectedActivity?.tipo_attivita).label}
+                </ThemedText>
+              </View>
+            </View>
+
+            <View style={styles.detailRow}>
+              <ThemedText style={[styles.detailLabel, { color: textSecondary }]}>Data e ora:</ThemedText>
+              <ThemedText style={styles.detailVal}>
+                {selectedActivity ? formatActivityDate(selectedActivity.timestamp) : '—'}
+              </ThemedText>
+            </View>
+
+            <View style={styles.detailRow}>
+              <ThemedText style={[styles.detailLabel, { color: textSecondary }]}>Arnia:</ThemedText>
+              <ThemedText style={styles.detailVal}>{currentHive?.name}</ThemedText>
+            </View>
+
+            <View style={styles.noteDetailDescWrap}>
+              <ThemedText style={[styles.detailLabel, { color: textSecondary }]}>Descrizione</ThemedText>
+              <ThemedText style={styles.noteDetailDesc}>
+                {selectedActivity?.descrizione || 'Nessuna descrizione'}
+              </ThemedText>
+            </View>
+
+            <TouchableOpacity
+              style={[styles.saveModalBtn, { marginTop: 20, height: 44, borderRadius: 12, justifyContent: 'center', alignItems: 'center' }]}
+              onPress={() => setNoteDetailVisible(false)}>
+              <ThemedText style={styles.saveBtnText}>Chiudi</ThemedText>
+            </TouchableOpacity>
+          </ThemedView>
+        </View>
+      </Modal>
     </SafeAreaView>
+  );
+}
+
+function BeehiveMap({ latitude, longitude }: { latitude: number; longitude: number }) {
+  const colorScheme = useColorScheme();
+  const isDark = colorScheme === 'dark';
+  const screenWidth = Dimensions.get('window').width;
+  const mapWidth = Math.min(Math.max(screenWidth - 32, 280), 400);
+  const mapHeight = 220;
+  const dLon = 0.012;
+  const dLat = 0.008;
+
+  const embedUrl =
+    `https://www.openstreetmap.org/export/embed.html?` +
+    `bbox=${longitude - dLon}%2C${latitude - dLat}%2C${longitude + dLon}%2C${latitude + dLat}` +
+    `&layer=mapnik&marker=${latitude}%2C${longitude}`;
+
+  if (Platform.OS === 'web') {
+    return (
+      <View
+        style={{
+          width: mapWidth,
+          height: mapHeight,
+          borderRadius: 14,
+          overflow: 'hidden',
+          backgroundColor: isDark ? '#1F2937' : '#E5E7EB',
+        }}>
+        {createElement('iframe', {
+          src: embedUrl,
+          title: 'Mappa OpenStreetMap',
+          loading: 'lazy',
+          style: { width: '100%', height: '100%', border: 0 },
+        })}
+      </View>
+    );
+  }
+
+  return (
+    <View
+      style={{
+        width: mapWidth,
+        height: mapHeight,
+        borderRadius: 14,
+        overflow: 'hidden',
+        backgroundColor: isDark ? '#1F2937' : '#E5E7EB',
+      }}>
+      <WebView source={{ uri: embedUrl }} style={{ flex: 1 }} />
+    </View>
   );
 }
 
@@ -1658,6 +2050,34 @@ const styles = StyleSheet.create({
     fontSize: 13,
     marginTop: 4,
   },
+  locationRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 10,
+  },
+  mapAttribution: {
+    fontSize: 11,
+    fontWeight: '400',
+    marginTop: 8,
+    textAlign: 'center',
+  },
+  locationText: {
+    fontSize: 13,
+    fontWeight: '600',
+    flex: 1,
+  },
+  noLocationBox: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 36,
+    gap: 8,
+  },
+  noLocationText: {
+    fontSize: 14,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
   statusBanner: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1778,6 +2198,42 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginVertical: 4,
+  },
+  chartPlotWrap: {
+    position: 'relative',
+  },
+  noteMarker: {
+    position: 'absolute',
+    width: 22,
+    height: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  noteMarkerIcon: {
+    fontSize: 16,
+    lineHeight: 18,
+  },
+  noteDetailDescWrap: {
+    marginTop: 8,
+    backgroundColor: 'rgba(150,150,150,0.08)',
+    borderRadius: 10,
+    padding: 12,
+  },
+  noteDetailDesc: {
+    fontSize: 14,
+    lineHeight: 20,
+    marginTop: 4,
+  },
+  noDataContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 48,
+  },
+  noDataText: {
+    fontSize: 14,
+    fontWeight: '600',
+    marginTop: 10,
+    textAlign: 'center',
   },
   xAxisRow: {
     flexDirection: 'row',
@@ -2062,6 +2518,97 @@ const styles = StyleSheet.create({
     height: 90,
     textAlignVertical: 'top',
   },
+  calendarCard: {
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 10,
+  },
+  calendarHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  calendarMonthLabel: {
+    fontSize: 14,
+    fontWeight: '700',
+    textTransform: 'capitalize',
+  },
+  calendarWeekRow: {
+    flexDirection: 'row',
+    marginBottom: 4,
+  },
+  calendarWeekHeader: {
+    flex: 1,
+    textAlign: 'center',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  calendarGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+  calendarDayCell: {
+    width: `${100 / 7}%`,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 2,
+  },
+  calendarDayBtn: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  calendarDayBtnActive: {
+    backgroundColor: '#2563EB',
+  },
+  calendarDayText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  calendarDayTextActive: {
+    color: '#FFFFFF',
+  },
+  timePickerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  timeStepper: {
+    width: 72,
+    borderWidth: 1,
+    borderRadius: 10,
+    alignItems: 'center',
+    paddingVertical: 4,
+  },
+  timeStepBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 2,
+  },
+  timeValue: {
+    fontSize: 18,
+    fontWeight: '800',
+  },
+  timeColon: {
+    fontSize: 24,
+    fontWeight: '700',
+    opacity: 0.6,
+  },
+  dateSummaryBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingVertical: 10,
+    marginTop: 12,
+    marginBottom: 14,
+  },
+  dateSummaryText: { fontSize: 14, fontWeight: '600' },
   modalButtonsRow: {
     flexDirection: 'row',
     gap: 10,

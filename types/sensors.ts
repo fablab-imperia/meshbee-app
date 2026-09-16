@@ -16,6 +16,9 @@ export interface BeehiveData {
   currentTemperature: number;
   currentHumidity: number;
   lastUpdate?: Date;
+  latitude?: number | null;
+  longitude?: number | null;
+  location?: string | null;
 }
 
 export interface BeehiveSummary {

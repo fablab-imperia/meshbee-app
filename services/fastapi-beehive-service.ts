@@ -24,6 +24,11 @@ import { BeehiveData, SensorReading } from '@/types/sensors';
  * Converte ArniaConStato in BeehiveData
  */
 function mapArniaToBeehive(arnia: ArniaConStato): BeehiveData {
+  const parseCoord = (value: string | null): number | null => {
+    if (!value) return null;
+    const num = parseFloat(value);
+    return isFinite(num) ? num : null;
+  };
   return {
     id: String(arnia.id_arnia),
     deviceId: arnia.id_nodo,
@@ -35,6 +40,9 @@ function mapArniaToBeehive(arnia: ArniaConStato): BeehiveData {
     currentTemperature: arnia.ultima_temperatura ? parseFloat(arnia.ultima_temperatura) : NaN,
     currentHumidity: arnia.ultima_umidita ? parseFloat(arnia.ultima_umidita) : NaN,
     lastUpdate: arnia.ultimo_aggiornamento ? new Date(arnia.ultimo_aggiornamento) : undefined,
+    latitude: parseCoord(arnia.latitudine),
+    longitude: parseCoord(arnia.longitudine),
+    location: arnia.posizione || null,
   };
 }
 

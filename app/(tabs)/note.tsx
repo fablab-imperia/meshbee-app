@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import {
   ActivityIndicator,
   RefreshControl,
@@ -61,15 +61,18 @@ export default function NoteScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [selectedHiveId, setSelectedHiveId] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const [hiveFilterOpen, setHiveFilterOpen] = useState(false);
 
   // Modal State
   const [modalVisible, setModalVisible] = useState(false);
   const [editingNote, setEditingNote] = useState<NoteItemWithHive | null>(null);
   const [noteText, setNoteText] = useState('');
-  const [noteDate, setNoteDate] = useState('');
+  const [selectedTime, setSelectedTime] = useState<Date>(new Date());
+  const [calendarMonth, setCalendarMonth] = useState<Date>(new Date());
   const [targetHiveId, setTargetHiveId] = useState<string>('');
   const [noteType, setNoteType] = useState<string>('ispezione');
   const [typeDropdownOpen, setTypeDropdownOpen] = useState(false);
+  const [hiveDropdownOpen, setHiveDropdownOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [modalError, setModalError] = useState<string | null>(null);
 
@@ -178,28 +181,33 @@ export default function NoteScreen() {
   };
 
   const handleOpenCreateModal = () => {
+    const now = new Date();
     setEditingNote(null);
     setNoteText('');
-    setNoteDate(new Date().toISOString().slice(0, 16).replace('T', ' '));
+    setSelectedTime(now);
+    setCalendarMonth(new Date(now.getFullYear(), now.getMonth(), 1));
     setTargetHiveId(selectedHiveId !== 'all' ? selectedHiveId : beehives[0]?.id || '1');
     setNoteType('ispezione');
     setTypeDropdownOpen(false);
+    setHiveDropdownOpen(false);
     setModalError(null);
     setModalVisible(true);
   };
 
   const handleOpenEditModal = (note: NoteItemWithHive) => {
+    const d = new Date(note.timestamp);
+    const valid = !isNaN(d.getTime()) ? d : new Date();
     setEditingNote(note);
     setNoteText(note.descrizione || '');
-    setNoteDate(
-      new Date(note.timestamp).toISOString().slice(0, 16).replace('T', ' ')
-    );
+    setSelectedTime(valid);
+    setCalendarMonth(new Date(valid.getFullYear(), valid.getMonth(), 1));
     setTargetHiveId(note.hiveId);
     const found = TIPOLOGIE_ATTIVITA.find(
       (t) => t.value === note.tipo_attivita || t.value === (note as any).tipo_Attivita
     );
     setNoteType(found ? found.value : 'altro');
     setTypeDropdownOpen(false);
+    setHiveDropdownOpen(false);
     setModalError(null);
     setModalVisible(true);
   };
@@ -219,10 +227,9 @@ export default function NoteScreen() {
     setModalError(null);
 
     try {
-      const parsedDate = new Date(noteDate.replace(' ', 'T'));
-      const timestamp = isNaN(parsedDate.getTime())
-        ? new Date().toISOString()
-        : parsedDate.toISOString();
+      const timestamp = !isNaN(selectedTime.getTime())
+        ? selectedTime.toISOString()
+        : new Date().toISOString();
 
       const activityPayload = {
         descrizione: noteText.trim(),
@@ -336,6 +343,48 @@ export default function NoteScreen() {
   const textSecondary = isDark ? '#9CA3AF' : '#6B7280';
   const selectedTypeInfo = getTipologiaInfo(noteType);
 
+  const changeMonth = (delta: number) => {
+    setCalendarMonth((prev) => new Date(prev.getFullYear(), prev.getMonth() + delta, 1));
+  };
+
+  const changeHour = (delta: number) => {
+    setSelectedTime((prev) => {
+      const nd = new Date(prev);
+      nd.setHours(prev.getHours() + delta);
+      return nd;
+    });
+  };
+
+  const changeMinute = (delta: number) => {
+    setSelectedTime((prev) => {
+      const nd = new Date(prev);
+      nd.setMinutes(prev.getMinutes() + delta);
+      return nd;
+    });
+  };
+
+  const isSameDay = (a: Date, b: Date) =>
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate();
+
+  const calendarDays = useMemo(() => {
+    const year = calendarMonth.getFullYear();
+    const month = calendarMonth.getMonth();
+    const firstWeekday = (new Date(year, month, 1).getDay() + 6) % 7;
+    const cells: (Date | null)[] = [];
+    for (let i = 0; i < firstWeekday; i++) cells.push(null);
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    for (let d = 1; d <= daysInMonth; d++) cells.push(new Date(year, month, d));
+    while (cells.length % 7 !== 0) cells.push(null);
+    return cells;
+  }, [calendarMonth]);
+
+  const formattedDateTime =
+    selectedTime.toLocaleDateString('it-IT', { day: '2-digit', month: 'long', year: 'numeric' }) +
+    ' • ' +
+    selectedTime.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: isDark ? '#111213' : '#F9FAFB' }]} edges={['top']}>
       <AppHeader />
@@ -362,38 +411,103 @@ export default function NoteScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* Hive Filter Chips */}
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={styles.filterScroll}
-          contentContainerStyle={styles.filterContainer}>
+        {/* Hive Filter Select */}
+        <View style={styles.dropdownContainer}>
           <TouchableOpacity
-            style={[styles.filterChip, selectedHiveId === 'all' && styles.filterChipActive]}
-            onPress={() => setSelectedHiveId('all')}>
-            <ThemedText
-              style={[
-                styles.filterChipText,
-                selectedHiveId === 'all' && styles.filterChipTextActive,
-              ]}>
-              Tutte
-            </ThemedText>
-          </TouchableOpacity>
-          {beehives.map((hive) => (
-            <TouchableOpacity
-              key={hive.id}
-              style={[styles.filterChip, selectedHiveId === hive.id && styles.filterChipActive]}
-              onPress={() => setSelectedHiveId(hive.id)}>
+            style={[
+              styles.dropdownButton,
+              {
+                borderColor: hiveFilterOpen ? '#2563EB' : borderColor,
+                backgroundColor: isDark ? '#1F2937' : '#F9FAFB',
+              },
+            ]}
+            onPress={() => setHiveFilterOpen((prev) => !prev)}
+            activeOpacity={0.7}>
+            <View style={styles.dropdownValueRow}>
+              <Ionicons name="home-outline" size={16} color="#2563EB" />
               <ThemedText
-                style={[
-                  styles.filterChipText,
-                  selectedHiveId === hive.id && styles.filterChipTextActive,
-                ]}>
-                {hive.name}
+                style={[styles.dropdownValueText, { color: isDark ? '#FFFFFF' : '#111827' }]}>
+                {selectedHiveId === 'all'
+                  ? 'Tutte le arnie'
+                  : beehives.find((b) => b.id === selectedHiveId)?.name || 'Tutte le arnie'}
               </ThemedText>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
+            </View>
+            <Ionicons
+              name={hiveFilterOpen ? 'chevron-up' : 'chevron-down'}
+              size={18}
+              color={isDark ? '#9CA3AF' : '#6B7280'}
+            />
+          </TouchableOpacity>
+
+          {hiveFilterOpen && (
+            <View
+              style={[
+                styles.dropdownList,
+                {
+                  backgroundColor: isDark ? '#1F2937' : '#FFFFFF',
+                  borderColor: borderColor,
+                },
+              ]}>
+              <TouchableOpacity
+                style={[
+                  styles.dropdownItem,
+                  selectedHiveId === 'all' && {
+                    backgroundColor: isDark ? 'rgba(37, 99, 235, 0.2)' : '#EFF6FF',
+                  },
+                ]}
+                onPress={() => {
+                  setSelectedHiveId('all');
+                  setHiveFilterOpen(false);
+                }}>
+                <View style={styles.dropdownItemContent}>
+                  <ThemedText style={styles.dropdownItemIcon}>📋</ThemedText>
+                  <ThemedText
+                    style={[
+                      styles.dropdownItemLabel,
+                      {
+                        color: selectedHiveId === 'all' ? '#2563EB' : isDark ? '#F3F4F6' : '#1F2937',
+                      },
+                      selectedHiveId === 'all' && { fontWeight: '700' },
+                    ]}>
+                    Tutte le arnie
+                  </ThemedText>
+                </View>
+                {selectedHiveId === 'all' && <Ionicons name="checkmark" size={18} color="#2563EB" />}
+              </TouchableOpacity>
+
+              {beehives.map((b) => {
+                const isSelected = selectedHiveId === b.id;
+                return (
+                  <TouchableOpacity
+                    key={b.id}
+                    style={[
+                      styles.dropdownItem,
+                      isSelected && {
+                        backgroundColor: isDark ? 'rgba(37, 99, 235, 0.2)' : '#EFF6FF',
+                      },
+                    ]}
+                    onPress={() => {
+                      setSelectedHiveId(b.id);
+                      setHiveFilterOpen(false);
+                    }}>
+                    <View style={styles.dropdownItemContent}>
+                      <ThemedText style={styles.dropdownItemIcon}>🏠</ThemedText>
+                      <ThemedText
+                        style={[
+                          styles.dropdownItemLabel,
+                          { color: isSelected ? '#2563EB' : isDark ? '#F3F4F6' : '#1F2937' },
+                          isSelected && { fontWeight: '700' },
+                        ]}>
+                        {b.name}
+                      </ThemedText>
+                    </View>
+                    {isSelected && <Ionicons name="checkmark" size={18} color="#2563EB" />}
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          )}
+        </View>
 
         {/* Search Bar */}
         <View style={[styles.searchBox, { backgroundColor: cardBg, borderColor }]}>
@@ -495,27 +609,94 @@ export default function NoteScreen() {
                 </View>
               )}
 
-              {/* Target Hive Picker */}
-              <ThemedText style={styles.inputLabel}>Seleziona Arnia</ThemedText>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
-                {beehives.map((b) => (
+              {/* Target Hive */}
+              <ThemedText style={styles.inputLabel}>
+                {editingNote ? 'Arnia (non modificabile)' : 'Seleziona Arnia'}
+              </ThemedText>
+              {editingNote ? (
+                <View style={[styles.hiveFixedBox, { borderColor, marginBottom: 14 }]}>
+                  <Ionicons name="home-outline" size={16} color="#4F46E5" />
+                  <ThemedText style={styles.hiveFixedText}>
+                    {beehives.find((b) => b.id === editingNote.hiveId)?.name ||
+                      editingNote.hiveName ||
+                      `Arnia ${editingNote.hiveId}`}
+                  </ThemedText>
+                  <Ionicons name="lock-closed-outline" size={14} color="#9CA3AF" />
+                </View>
+              ) : (
+                <View style={styles.dropdownContainer}>
                   <TouchableOpacity
-                    key={b.id}
                     style={[
-                      styles.hiveSelectChip,
-                      targetHiveId === b.id && styles.hiveSelectChipActive,
+                      styles.dropdownButton,
+                      {
+                        borderColor: hiveDropdownOpen ? '#2563EB' : borderColor,
+                        backgroundColor: isDark ? '#1F2937' : '#F9FAFB',
+                      },
                     ]}
-                    onPress={() => setTargetHiveId(b.id)}>
-                    <ThemedText
-                      style={[
-                        styles.hiveSelectChipText,
-                        targetHiveId === b.id && styles.hiveSelectChipTextActive,
-                      ]}>
-                      {b.name}
-                    </ThemedText>
+                    onPress={() => setHiveDropdownOpen((prev) => !prev)}
+                    activeOpacity={0.7}>
+                    <View style={styles.dropdownValueRow}>
+                      <Ionicons name="home-outline" size={16} color="#2563EB" />
+                      <ThemedText
+                        style={[
+                          styles.dropdownValueText,
+                          { color: isDark ? '#FFFFFF' : '#111827' },
+                        ]}>
+                        {beehives.find((b) => b.id === targetHiveId)?.name || "Seleziona un'arnia"}
+                      </ThemedText>
+                    </View>
+                    <Ionicons
+                      name={hiveDropdownOpen ? 'chevron-up' : 'chevron-down'}
+                      size={18}
+                      color={isDark ? '#9CA3AF' : '#6B7280'}
+                    />
                   </TouchableOpacity>
-                ))}
-              </ScrollView>
+
+                  {hiveDropdownOpen && (
+                    <View
+                      style={[
+                        styles.dropdownList,
+                        {
+                          backgroundColor: isDark ? '#1F2937' : '#FFFFFF',
+                          borderColor: borderColor,
+                        },
+                      ]}>
+                      {beehives.map((b) => {
+                        const isSelected = targetHiveId === b.id;
+                        return (
+                          <TouchableOpacity
+                            key={b.id}
+                            style={[
+                              styles.dropdownItem,
+                              isSelected && {
+                                backgroundColor: isDark ? 'rgba(37, 99, 235, 0.2)' : '#EFF6FF',
+                              },
+                            ]}
+                            onPress={() => {
+                              setTargetHiveId(b.id);
+                              setHiveDropdownOpen(false);
+                            }}>
+                            <View style={styles.dropdownItemContent}>
+                              <ThemedText style={styles.dropdownItemIcon}>🏠</ThemedText>
+                              <ThemedText
+                                style={[
+                                  styles.dropdownItemLabel,
+                                  {
+                                    color: isSelected ? '#2563EB' : isDark ? '#F3F4F6' : '#1F2937',
+                                  },
+                                  isSelected && { fontWeight: '700' },
+                                ]}>
+                                {b.name}
+                              </ThemedText>
+                            </View>
+                            {isSelected && <Ionicons name="checkmark" size={18} color="#2563EB" />}
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  )}
+                </View>
+              )}
 
               {/* Tipologia Dropdown */}
               <ThemedText style={styles.inputLabel}>Tipologia</ThemedText>
@@ -592,14 +773,108 @@ export default function NoteScreen() {
                 )}
               </View>
 
-              <ThemedText style={styles.inputLabel}>Data e Ora (YYYY-MM-DD HH:MM)</ThemedText>
-              <TextInput
-                style={[styles.modalInput, { color: isDark ? '#FFF' : '#000', borderColor }]}
-                value={noteDate}
-                onChangeText={setNoteDate}
-                placeholder="2026-08-26 14:00"
-                placeholderTextColor="#999"
-              />
+              <ThemedText style={styles.inputLabel}>Data</ThemedText>
+              <View style={[styles.calendarCard, { borderColor }]}>
+                <View style={styles.calendarHeader}>
+                  <TouchableOpacity
+                    onPress={() => changeMonth(-1)}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                    <Ionicons name="chevron-back" size={18} color="#2563EB" />
+                  </TouchableOpacity>
+                  <ThemedText style={styles.calendarMonthLabel}>
+                    {calendarMonth.toLocaleDateString('it-IT', { month: 'long', year: 'numeric' })}
+                  </ThemedText>
+                  <TouchableOpacity
+                    onPress={() => changeMonth(1)}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                    <Ionicons name="chevron-forward" size={18} color="#2563EB" />
+                  </TouchableOpacity>
+                </View>
+
+                <View style={styles.calendarWeekRow}>
+                  {['L', 'M', 'M', 'G', 'V', 'S', 'D'].map((w, i) => (
+                    <ThemedText key={`wd-${i}`} style={[styles.calendarWeekHeader, { color: textSecondary }]}>
+                      {w}
+                    </ThemedText>
+                  ))}
+                </View>
+
+                <View style={styles.calendarGrid}>
+                  {calendarDays.map((day, i) => {
+                    const isSelected = day && isSameDay(day, selectedTime);
+                    const isToday = day && isSameDay(day, new Date());
+                    return (
+                      <View key={i} style={styles.calendarDayCell}>
+                        {day ? (
+                          <TouchableOpacity
+                            style={[
+                              styles.calendarDayBtn,
+                              isSelected && styles.calendarDayBtnActive,
+                            ]}
+                            onPress={() => {
+                              const nd = new Date(selectedTime);
+                              nd.setFullYear(day.getFullYear(), day.getMonth(), day.getDate());
+                              setSelectedTime(nd);
+                            }}>
+                            <ThemedText
+                              style={[
+                                styles.calendarDayText,
+                                isSelected && styles.calendarDayTextActive,
+                                isToday && !isSelected && { color: '#2563EB', fontWeight: '800' },
+                              ]}>
+                              {day.getDate()}
+                            </ThemedText>
+                          </TouchableOpacity>
+                        ) : null}
+                      </View>
+                    );
+                  })}
+                </View>
+              </View>
+
+              <ThemedText style={[styles.inputLabel, { marginTop: 12 }]}>Ora</ThemedText>
+              <View style={styles.timePickerRow}>
+                <View style={[styles.timeStepper, { borderColor }]}>
+                  <TouchableOpacity
+                    onPress={() => changeHour(1)}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    style={styles.timeStepBtn}>
+                    <Ionicons name="chevron-up" size={16} color="#2563EB" />
+                  </TouchableOpacity>
+                  <ThemedText style={styles.timeValue}>
+                    {String(selectedTime.getHours()).padStart(2, '0')}
+                  </ThemedText>
+                  <TouchableOpacity
+                    onPress={() => changeHour(-1)}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    style={styles.timeStepBtn}>
+                    <Ionicons name="chevron-down" size={16} color="#2563EB" />
+                  </TouchableOpacity>
+                </View>
+                <ThemedText style={styles.timeColon}>:</ThemedText>
+                <View style={[styles.timeStepper, { borderColor }]}>
+                  <TouchableOpacity
+                    onPress={() => changeMinute(1)}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    style={styles.timeStepBtn}>
+                    <Ionicons name="chevron-up" size={16} color="#2563EB" />
+                  </TouchableOpacity>
+                  <ThemedText style={styles.timeValue}>
+                    {String(selectedTime.getMinutes()).padStart(2, '0')}
+                  </ThemedText>
+                  <TouchableOpacity
+                    onPress={() => changeMinute(-1)}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    style={styles.timeStepBtn}>
+                    <Ionicons name="chevron-down" size={16} color="#2563EB" />
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              <View style={[styles.dateSummaryBox, { backgroundColor: cardBg, borderColor }]}>
+                <Ionicons name="calendar-outline" size={16} color="#2563EB" />
+                <ThemedText style={styles.dateSummaryText}>{formattedDateTime}</ThemedText>
+              </View>
 
               <ThemedText style={styles.inputLabel}>Contenuto Nota</ThemedText>
               <TextInput
@@ -675,17 +950,6 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   addNoteBtnText: { color: '#FFFFFF', fontWeight: '700', fontSize: 13 },
-  filterScroll: { marginBottom: 12 },
-  filterContainer: { gap: 8 },
-  filterChip: {
-    paddingHorizontal: 14,
-    paddingVertical: 7,
-    borderRadius: 20,
-    backgroundColor: 'rgba(150, 150, 150, 0.15)',
-  },
-  filterChipActive: { backgroundColor: '#2563EB' },
-  filterChipText: { fontSize: 13, fontWeight: '600' },
-  filterChipTextActive: { color: '#FFFFFF' },
   searchBox: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -771,16 +1035,108 @@ const styles = StyleSheet.create({
   },
   errorBannerText: { color: '#FF3B30', fontSize: 13, textAlign: 'center' },
   inputLabel: { fontSize: 13, fontWeight: '600', marginBottom: 6, opacity: 0.8 },
-  hiveSelectChip: {
+  hiveFixedBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    borderWidth: 1,
+    borderRadius: 10,
     paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 14,
-    backgroundColor: 'rgba(150, 150, 150, 0.15)',
-    marginRight: 8,
+    paddingVertical: 10,
+    minHeight: 44,
   },
-  hiveSelectChipActive: { backgroundColor: '#2563EB' },
-  hiveSelectChipText: { fontSize: 12, fontWeight: '600' },
-  hiveSelectChipTextActive: { color: '#FFFFFF' },
+  hiveFixedText: { fontSize: 14, fontWeight: '600', flex: 1 },
+  calendarCard: {
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 10,
+  },
+  calendarHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  calendarMonthLabel: {
+    fontSize: 14,
+    fontWeight: '700',
+    textTransform: 'capitalize',
+  },
+  calendarWeekRow: {
+    flexDirection: 'row',
+    marginBottom: 4,
+  },
+  calendarWeekHeader: {
+    flex: 1,
+    textAlign: 'center',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  calendarGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+  calendarDayCell: {
+    width: `${100 / 7}%`,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 2,
+  },
+  calendarDayBtn: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  calendarDayBtnActive: {
+    backgroundColor: '#2563EB',
+  },
+  calendarDayText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  calendarDayTextActive: {
+    color: '#FFFFFF',
+  },
+  timePickerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  timeStepper: {
+    width: 72,
+    borderWidth: 1,
+    borderRadius: 10,
+    alignItems: 'center',
+    paddingVertical: 4,
+  },
+  timeStepBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 2,
+  },
+  timeValue: {
+    fontSize: 18,
+    fontWeight: '800',
+  },
+  timeColon: {
+    fontSize: 24,
+    fontWeight: '700',
+    opacity: 0.6,
+  },
+  dateSummaryBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingVertical: 10,
+    marginTop: 12,
+    marginBottom: 14,
+  },
+  dateSummaryText: { fontSize: 14, fontWeight: '600' },
   dropdownContainer: {
     marginBottom: 14,
   },
