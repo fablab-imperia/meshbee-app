@@ -17,7 +17,7 @@ import { useRouter } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
-interface MockUser {
+interface User {
   id: number;
   name: string;
   email: string;
@@ -39,50 +39,9 @@ export default function AdminScreen() {
   >(null);
 
   // Users state
-  const [users, setUsers] = useState<MockUser[]>([
-    {
-      id: 1,
-      name: 'Marco Rossi',
-      email: 'marco.rossi@azienda.it',
-      role: 'Amministratore',
-      active: true,
-      createdAt: '12/04/2026 10:15',
-      lastAccess: '01/08/2026 13:42',
-      initials: 'MR',
-    },
-    {
-      id: 2,
-      name: 'Anna Bianchi',
-      email: 'anna.bianchi@azienda.it',
-      role: 'Operatore',
-      active: true,
-      createdAt: '18/05/2026 09:30',
-      lastAccess: '01/08/2026 11:20',
-      initials: 'AB',
-    },
-    {
-      id: 3,
-      name: 'Luca Verdi',
-      email: 'luca.verdi@azienda.it',
-      role: 'Operatore',
-      active: true,
-      createdAt: '22/05/2026 14:00',
-      lastAccess: '31/07/2026 17:45',
-      initials: 'LV',
-    },
-    {
-      id: 4,
-      name: 'Giulia Neri',
-      email: 'giulia.neri@azienda.it',
-      role: 'Visualizzatore',
-      active: false,
-      createdAt: '01/06/2026 16:10',
-      lastAccess: '20/07/2026 08:15',
-      initials: 'GN',
-    },
-  ]);
+  const [users, setUsers] = useState<User[]>([]);
 
-  const [selectedUser, setSelectedUser] = useState<MockUser | null>(null);
+  const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [searchUserQuery, setSearchUserQuery] = useState('');
 
   // New user form state
@@ -112,7 +71,7 @@ export default function AdminScreen() {
       ? `${parts[0][0]}${parts[1][0]}`.toUpperCase()
       : newUserName.slice(0, 2).toUpperCase();
 
-    const created: MockUser = {
+    const created: User = {
       id: Date.now(),
       name: newUserName.trim(),
       email: newUserEmail.trim(),

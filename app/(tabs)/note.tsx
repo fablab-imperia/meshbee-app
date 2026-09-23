@@ -134,33 +134,7 @@ export default function NoteScreen() {
         }
       }
 
-      // If no notes loaded from API, populate initial sample notes for a complete experience
-      if (allNotesList.length === 0) {
-        allNotesList.push(
-          {
-            id_log: 1,
-            id_arnia: 1,
-            id_utente: null,
-            tipo_attivita: 'Visita di controllo',
-            descrizione: 'Regina presente e attiva, scorte di miele adeguate, ottima covata.',
-            timestamp: new Date(Date.now() - 86400000).toISOString(),
-            dati: null,
-            hiveName: 'Arnia Alpha',
-            hiveId: '1',
-          },
-          {
-            id_log: 2,
-            id_arnia: 2,
-            id_utente: null,
-            tipo_attivita: 'Controllo peso',
-            descrizione: 'Verificato calo peso. Effettuato inserimento sciroppo di soccorso.',
-            timestamp: new Date().toISOString(),
-            dati: null,
-            hiveName: 'Arnia Beta',
-            hiveId: '2',
-          }
-        );
-      }
+
 
       // Sort by newest timestamp
       allNotesList.sort(

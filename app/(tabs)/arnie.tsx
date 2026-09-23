@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo, useCallback, createElement } from 'react';
+import React, { useEffect, useState, useMemo, useCallback, createElement, useRef } from 'react';
 import {
   ScrollView,
   StyleSheet,
@@ -11,6 +11,7 @@ import {
   Dimensions,
   Platform,
   Alert,
+  Pressable,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Ionicons from '@expo/vector-icons/Ionicons';
@@ -57,7 +58,7 @@ export default function ArnieScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [activities, setActivities] = useState<AttivitaResponse[]>([]);
 
-  // View Mode: 'overview' shows the Panoramica general panel (mockup), 'detail' shows the single hive graphs
+  // View Mode: 'overview' shows the Panoramica general panel, 'detail' shows the single hive graphs
   const [viewMode, setViewMode] = useState<ViewMode>('overview');
 
   // Search and Filter states for Panoramica
@@ -97,90 +98,6 @@ export default function ArnieScreen() {
         if (!selectedHiveId || !result.data.some((h) => h.id === selectedHiveId)) {
           setSelectedHiveId(result.data[0].id);
         }
-      } else {
-        // Mock data matching mockup exactly
-        const mockAlphaReadings: SensorReading[] = [
-          { timestamp: new Date(Date.now() - 3600000 * 24), value: 34.0 },
-          { timestamp: new Date(Date.now() - 3600000 * 20), value: 33.8 },
-          { timestamp: new Date(Date.now() - 3600000 * 16), value: 34.1 },
-          { timestamp: new Date(Date.now() - 3600000 * 12), value: 34.6 },
-          { timestamp: new Date(Date.now() - 3600000 * 10), value: 34.5 },
-          { timestamp: new Date(Date.now() - 3600000 * 8), value: 34.9 },
-          { timestamp: new Date(Date.now() - 3600000 * 6), value: 35.3 },
-          { timestamp: new Date(Date.now() - 3600000 * 4), value: 35.7 },
-          { timestamp: new Date(Date.now() - 3600000 * 2), value: 34.7 },
-          { timestamp: new Date(Date.now() - 3600000 * 1), value: 35.1 },
-          { timestamp: new Date(), value: 35.0 },
-        ];
-
-        const mockWeightReadings: SensorReading[] = [
-          { timestamp: new Date(Date.now() - 3600000 * 24), value: 43.0 },
-          { timestamp: new Date(Date.now() - 3600000 * 16), value: 42.8 },
-          { timestamp: new Date(Date.now() - 3600000 * 8), value: 42.6 },
-          { timestamp: new Date(), value: 42.4 },
-        ];
-
-        const mockHumidityReadings: SensorReading[] = [
-          { timestamp: new Date(Date.now() - 3600000 * 24), value: 68 },
-          { timestamp: new Date(Date.now() - 3600000 * 16), value: 66 },
-          { timestamp: new Date(Date.now() - 3600000 * 8), value: 64 },
-          { timestamp: new Date(), value: 65 },
-        ];
-
-        // Dates for today matching mockup 14:00 and 13:55
-        const today1400 = new Date();
-        today1400.setHours(14, 0, 0, 0);
-        const today1355 = new Date();
-        today1355.setHours(13, 55, 0, 0);
-
-        setBeehives([
-          {
-            id: '1',
-            deviceId: 'NODE001',
-            name: 'Arnia Alpha',
-            weight: mockWeightReadings,
-            temperature: mockAlphaReadings,
-            humidity: mockHumidityReadings,
-            currentTemperature: 34.5,
-            currentWeight: 42.4,
-            currentHumidity: 65,
-            lastUpdate: today1400,
-            latitude: 43.8882,
-            longitude: 8.0288,
-            location: 'Imperia, terrazzo sud',
-          },
-          {
-            id: '2',
-            deviceId: 'NODE002',
-            name: 'Arnia Beta',
-            weight: mockWeightReadings.map((r) => ({ ...r, value: r.value - 3.7 })),
-            temperature: mockAlphaReadings.map((r) => ({ ...r, value: r.value + 0.7 })),
-            humidity: mockHumidityReadings.map((r) => ({ ...r, value: r.value - 4 })),
-            currentTemperature: 35.2,
-            currentWeight: 38.7,
-            currentHumidity: 61,
-            lastUpdate: today1355,
-            latitude: 43.891,
-            longitude: 8.024,
-            location: 'Imperia, oliveto nord',
-          },
-          {
-            id: '3',
-            deviceId: 'NODE003',
-            name: 'Arnia Gamma',
-            weight: mockWeightReadings,
-            temperature: mockAlphaReadings,
-            humidity: mockHumidityReadings,
-            currentTemperature: 34.1,
-            currentWeight: 41.8,
-            currentHumidity: 66,
-            lastUpdate: new Date(Date.now() - 3600000 * 3),
-            latitude: 43.8925,
-            longitude: 8.032,
-            location: 'Imperia, frutteto est',
-          },
-        ]);
-        setSelectedHiveId('1');
       }
     } catch {
       // Graceful fallback
@@ -195,17 +112,7 @@ export default function ArnieScreen() {
       if (res.success && res.data && res.data.length > 0) {
         setActivities(res.data);
       } else {
-        setActivities([
-          {
-            id_log: 101,
-            id_arnia: parseInt(id) || 1,
-            id_utente: null,
-            timestamp: new Date().toISOString(),
-            tipo_attivita: 'Visita di controllo',
-            descrizione: 'Regina attiva, scorte abbondanti, melario al 70%.',
-            dati: null,
-          },
-        ]);
+        setActivities([]);
       }
     } catch {
       setActivities([]);
@@ -221,6 +128,19 @@ export default function ArnieScreen() {
       loadHiveActivities(selectedHiveId);
     }
   }, [selectedHiveId, loadHiveActivities]);
+
+  // Selected data point for the chart tooltip
+  const [chartSelected, setChartSelected] = useState<{
+    x: number;
+    y: number;
+    value: number;
+    timestamp: Date;
+  } | null>(null);
+  const chartPressRef = useRef<any>(null);
+
+  useEffect(() => {
+    setChartSelected(null);
+  }, [selectedMetric, selectedRange, selectedHiveId]);
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -540,6 +460,78 @@ export default function ArnieScreen() {
     }
     return markers;
   }, [activities, filteredSeries, chartWidth]);
+
+  const chartUnit = selectedMetric === 'temperature' ? '°C' : selectedMetric === 'weight' ? 'kg' : '%';
+  const chartLineColor =
+    selectedMetric === 'temperature'
+      ? '#EF4444'
+      : selectedMetric === 'weight'
+      ? '#0D9488'
+      : '#0284C7';
+
+  const formatPointTime = (d: Date) => {
+    return (
+      d.toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit' }) +
+      ' ' +
+      d.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })
+    );
+  };
+
+  // Tap on the chart to show the closest data point tooltip (works on native + web)
+  const handleChartPress = (event: any) => {
+    if (chartPoints.length === 0) {
+      setChartSelected(null);
+      return;
+    }
+
+    const nativeEvent = event.nativeEvent ?? event;
+    let locX = nativeEvent.locationX;
+    let locY = nativeEvent.locationY;
+
+    // Web MouseEvent fallback (no locationX on raw DOM click)
+    if (locX == null && nativeEvent.clientX != null && chartPressRef.current?.getBoundingClientRect) {
+      const rect = chartPressRef.current.getBoundingClientRect();
+      locX = nativeEvent.clientX - rect.left;
+      locY = nativeEvent.clientY - rect.top;
+    }
+
+    if (locX == null || locY == null) return;
+
+    const stepX =
+      chartPoints.length > 1
+        ? (chartWidth - paddingX * 2) / (chartPoints.length - 1)
+        : chartWidth;
+    const xTolerance = Math.max(22, stepX * 0.5);
+    const yTolerance = 55;
+
+    let bestIndex = -1;
+    let bestDist = Infinity;
+
+    for (let i = 0; i < chartPoints.length; i++) {
+      const pt = chartPoints[i];
+      const dx = Math.abs(locX - pt.x);
+      if (dx > xTolerance) continue;
+      const dy = Math.abs(locY - pt.y);
+      if (dy > yTolerance) continue;
+      const dist = dx * dx + dy * dy;
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestIndex = i;
+      }
+    }
+
+    if (bestIndex >= 0) {
+      const pt = chartPoints[bestIndex];
+      setChartSelected({
+        x: pt.x,
+        y: pt.y,
+        value: pt.value,
+        timestamp: new Date(pt.timestamp),
+      });
+    } else {
+      setChartSelected(null);
+    }
+  };
 
   // Detail view status
   const isWeightDrop =
@@ -1045,6 +1037,10 @@ export default function ArnieScreen() {
               {/* SVG Smooth Curve Graph */}
               <View style={styles.svgGraphContainer}>
                 <View style={[styles.chartPlotWrap, { width: chartWidth }]}>
+                  <Pressable
+                    ref={chartPressRef}
+                    onPress={handleChartPress}
+                    style={{ width: chartWidth }}>
                   <Svg width={chartWidth} height={chartHeight}>
                   <Defs>
                     <SvgGradient id="chartGradient" x1="0" y1="0" x2="0" y2="1">
@@ -1124,6 +1120,7 @@ export default function ArnieScreen() {
                     />
                   ))}
                 </Svg>
+                  </Pressable>
 
                 {/* Note markers clickable overlay */}
                 {noteMarkers.map((m) => (
@@ -1139,6 +1136,31 @@ export default function ArnieScreen() {
                     </ThemedText>
                   </TouchableOpacity>
                 ))}
+
+                {/* Data Point Tooltip */}
+                {chartSelected && (
+                  <View
+                    pointerEvents="none"
+                    style={[
+                      styles.chartTooltip,
+                      {
+                        left: Math.max(16, Math.min(chartSelected.x - 70, chartWidth - 160)),
+                        top: Math.max(4, chartSelected.y - 62),
+                        backgroundColor: isDark ? '#2C2C2E' : '#FFFFFF',
+                        borderColor: chartLineColor,
+                      },
+                    ]}>
+                    <View style={[styles.chartTooltipDot, { backgroundColor: chartLineColor }]} />
+                    <View style={{ flex: 1 }}>
+                      <ThemedText style={styles.chartTooltipValue}>
+                        {chartSelected.value.toFixed(1)} {chartUnit}
+                      </ThemedText>
+                      <ThemedText style={styles.chartTooltipTime}>
+                        {formatPointTime(chartSelected.timestamp)}
+                      </ThemedText>
+                    </View>
+                  </View>
+                )}
                 </View>
               </View>
 
@@ -2212,6 +2234,37 @@ const styles = StyleSheet.create({
   noteMarkerIcon: {
     fontSize: 16,
     lineHeight: 18,
+  },
+  chartTooltip: {
+    position: 'absolute',
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    minWidth: 140,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 5,
+    zIndex: 20,
+  },
+  chartTooltipDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginRight: 8,
+  },
+  chartTooltipValue: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  chartTooltipTime: {
+    fontSize: 11,
+    opacity: 0.7,
+    marginTop: 1,
   },
   noteDetailDescWrap: {
     marginTop: 8,
