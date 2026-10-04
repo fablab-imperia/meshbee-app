@@ -1,4 +1,5 @@
 import { useAuth } from '@/contexts/FastAPIAuthContext';
+import { MeshBeeLogo } from '@/components/MeshBeeLogo';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { validateEmail } from '@/services/fastapi-auth-service';
 import { useRouter } from 'expo-router';
@@ -91,8 +92,10 @@ export default function LoginScreen() {
         keyboardShouldPersistTaps="handled">
         {/* Header */}
         <View style={styles.header}>
-          <Text style={[styles.logo, { color: colors.text }]}>🐝</Text>
-          <Text style={[styles.title, { color: colors.text }]}>BeeHive IoT</Text>
+          <View style={styles.logoBox}>
+            <MeshBeeLogo size={84} />
+          </View>
+          <Text style={[styles.title, { color: colors.text }]}>MeshBee</Text>
           <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
             Accedi alla tua piattaforma
           </Text>
@@ -192,8 +195,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 48,
   },
-  logo: {
-    fontSize: 64,
+  logoBox: {
     marginBottom: 16,
   },
   title: {

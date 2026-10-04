@@ -52,20 +52,23 @@ export default function TabLayout() {
   const tabBgColor = isDark ? '#151718' : '#FFFFFF';
   const tabBorderColor = isDark ? '#2C2C2E' : '#E5E7EB';
   const bottomInset = insets?.bottom || 0;
+  // edgeToEdgeEnabled: su Android l'app disegna sotto la barra di navigazione di sistema,
+  // quindi l'inset va sommato all'altezza e al padding per non farci finire le icone sotto.
+  const tabBarBaseHeight = Platform.OS === 'ios' ? 56 : 52;
 
   return (
     <Tabs
       screenOptions={{
-        headerShown: true,
+        headerShown: false,
         tabBarActiveTintColor: tabActiveColor,
         tabBarInactiveTintColor: tabInactiveColor,
         tabBarStyle: {
           backgroundColor: tabBgColor,
           borderTopColor: tabBorderColor,
           borderTopWidth: 1,
-          height: Platform.OS === 'ios' ? 56 + bottomInset : 64,
-          paddingBottom: Platform.OS === 'ios' ? (bottomInset > 0 ? bottomInset : 8) : 8,
-          paddingTop: 6,
+          height: tabBarBaseHeight + bottomInset,
+          paddingBottom: bottomInset > 0 ? bottomInset : 8,
+          paddingTop: Platform.OS === 'ios' ? 6 : 4,
           elevation: 8,
           shadowColor: '#000',
           shadowOffset: { width: 0, height: -2 },

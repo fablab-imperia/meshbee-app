@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { MeshBeeLogo } from '@/components/MeshBeeLogo';
 import { useAuth } from '@/contexts/FastAPIAuthContext';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useRouter } from 'expo-router';
@@ -21,7 +22,7 @@ interface AppHeaderProps {
   subtitle?: string;
 }
 
-export function AppHeader({ title = 'Monitoraggio Arnie' }: AppHeaderProps) {
+export function AppHeader({ title = 'MeshBee' }: AppHeaderProps) {
   const { user, signOut } = useAuth();
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
@@ -85,7 +86,9 @@ export function AppHeader({ title = 'Monitoraggio Arnie' }: AppHeaderProps) {
 
         {/* Center: Bee Logo & Title */}
         <View style={styles.centerTitleContainer}>
-          <ThemedText style={styles.beeEmoji}>🐝</ThemedText>
+          <View style={styles.logoWrapper}>
+            <MeshBeeLogo size={28} />
+          </View>
           <ThemedText style={styles.titleText}>{title}</ThemedText>
         </View>
 
@@ -244,8 +247,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  beeEmoji: {
-    fontSize: 22,
+  logoWrapper: {
     marginRight: 8,
   },
   titleText: {
