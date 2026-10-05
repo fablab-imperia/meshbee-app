@@ -77,32 +77,11 @@ export async function loadBeehivesData(): Promise<{
     const arnie = response.data;
     console.log(`📋 Trovate ${arnie.length} arnie`);
 
-    // Mappa arnie e carica serie temporali in parallelo
-    const beehivesData: BeehiveData[] = await Promise.all(
-      arnie.map(async (arnia) => {
-        const beehive = mapArniaToBeehive(arnia);
-
-        // Carica serie temporali degli ultimi 7 giorni (limite 100 punti per serie)
-        const [tempResult, humidityResult, weightResult] = await Promise.all([
-          loadTemperatureSeries(arnia.id_arnia, { limit: 100 }),
-          loadHumiditySeries(arnia.id_arnia, { limit: 100 }),
-          loadWeightSeries(arnia.id_arnia, { limit: 100 }),
-        ]);
-
-        // Aggiungi serie temporali se disponibili
-        if (tempResult.success && tempResult.data) {
-          beehive.temperature = tempResult.data;
-        }
-        if (humidityResult.success && humidityResult.data) {
-          beehive.humidity = humidityResult.data;
-        }
-        if (weightResult.success && weightResult.data) {
-          beehive.weight = weightResult.data;
-        }
-
-        return beehive;
-      })
-    );
+    // Solo i metadati dell'arnia: le serie storiche si caricano su richiesta con
+    // loadSensorSeries, che conosce metrica e finestra. Qui i valori correnti
+    // arrivano già nell'oggetto arnia, quindi prefetchare 3 serie per ogni arnia
+    // costerebbe N×3 richieste senza alimentare nulla.
+    const beehivesData: BeehiveData[] = arnie.map(mapArniaToBeehive);
 
     console.log('✅ Caricamento completato con successo!');
     return {
@@ -162,6 +141,49 @@ export async function loadSingleBeehiveData(
 // =============================================================================
 // SERIE TEMPORALI
 // =============================================================================
+
+/** Sensore monitorato, come selezionato nella UI. */
+export type SensorMetric = 'temperature' | 'humidity' | 'weight';
+
+/**
+ * Tetto di punti per richiesta. I nodi si svegliano ogni 60 minuti
+ * (TIME_TO_SLEEP in sender/config.h), quindi ~24 letture al giorno e 2000 punti
+ * coprono oltre due mesi di storico.
+ */
+const MAX_SERIES_POINTS = 2000;
+
+const SERIES_LOADERS: Record<
+  SensorMetric,
+  (
+    arniaId: string | number,
+    options?: {
+      dataInizio?: Date;
+      dataFine?: Date;
+      limit?: number;
+    }
+  ) => Promise<{ success: boolean; data?: SensorReading[]; error?: string }>
+> = {
+  temperature: loadTemperatureSeries,
+  humidity: loadHumiditySeries,
+  weight: loadWeightSeries,
+};
+
+/**
+ * Carica lo storico disponibile di un sensore, dal più recente indietro.
+ *
+ * Non passa `data_inizio`/`data_fine` di proposito: la colonna `timestamp` è un
+ * TIMESTAMP senza fuso, popolato con `CURRENT_TIMESTAMP` e confrontato dal server
+ * con un `datetime.now()` naive in ora locale. Mandare finestre ISO con `Z` dal
+ * client le disallinea di un offset e il grafico può risultare vuoto anche se il
+ * nodo ha appena scritto. Qui si prende solo "le ultime N letture" e la
+ * selezione del periodo la fa il client, ancorata all'ultima lettura ricevuta.
+ */
+export async function loadSensorSeries(
+  arniaId: string | number,
+  metric: SensorMetric
+): Promise<{ success: boolean; data?: SensorReading[]; error?: string }> {
+  return SERIES_LOADERS[metric](arniaId, { limit: MAX_SERIES_POINTS });
+}
 
 /**
  * Carica serie temporale temperatura

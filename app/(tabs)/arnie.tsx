@@ -36,8 +36,10 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import {
   loadBeehivesData,
   loadBeehiveActivities,
+  loadSensorSeries,
   createBeehiveActivity,
 } from '@/services/fastapi-beehive-service';
+import type { SensorMetric } from '@/services/fastapi-beehive-service';
 import { BeehiveData, SensorReading } from '@/types/sensors';
 import { AttivitaResponse } from '@/types/api';
 import { TIPOLOGIE_ATTIVITA, getTipologiaInfo } from './note';
@@ -46,6 +48,97 @@ type TimeRange = '24 ore' | '7 giorni' | '30 giorni' | 'Tutto';
 type MetricType = 'temperature' | 'weight' | 'humidity';
 type StatusFilter = 'tutte' | 'online' | 'attenzioni' | 'allarmi';
 type ViewMode = 'overview' | 'detail';
+
+const TIME_RANGES: TimeRange[] = ['24 ore', '7 giorni', '30 giorni', 'Tutto'];
+
+const RANGE_TO_HOURS: Record<TimeRange, number | null> = {
+  '24 ore': 24,
+  '7 giorni': 24 * 7,
+  '30 giorni': 24 * 30,
+  Tutto: null,
+};
+
+type MetricStyle = {
+  unit: string;
+  /** Cifre decimali per i valori di lettura (statistiche, tooltip). */
+  decimals: number;
+  color: string;
+};
+
+const METRIC_STYLE: Record<MetricType, MetricStyle> = {
+  temperature: { unit: '°C', decimals: 1, color: '#EF4444' },
+  // Il peso serve al grammo: arrotondare a una decimale nasconderebbe variazioni reali.
+  weight: { unit: 'kg', decimals: 2, color: '#0D9488' },
+  humidity: { unit: '%', decimals: 0, color: '#0284C7' },
+};
+
+/** Tetto di linee della griglia: oltre, le etichette si sovrappongono. */
+const MAX_AXIS_TICKS = 5;
+
+/**
+ * Arrotonda il dominio ai valori "leggibili" (1, 2, 5 × 10ⁿ) e restituisce i tick.
+ * Serve a far discendere etichette e linee dalla griglia dallo stesso dominio che
+ * scala i punti, così l'asse non può contraddire la curva.
+ *
+ * Si sceglie il passo più piccolo che tiene i tick entro MAX_AXIS_TICKS: è la
+ * risoluzione massima che resta leggibile, e su un dominio stretto (umidità
+ * 55-68%) evita il salto a 0/50/100 che schiaccierebbe la variazione utile.
+ */
+function buildAxisTicks(min: number, max: number): {
+  min: number;
+  max: number;
+  ticks: number[];
+} {
+  if (!isFinite(min) || !isFinite(max)) {
+    return { min: 0, max: 1, ticks: [0, 1] };
+  }
+  if (min === max) {
+    // Serie costante: senza un margine il dominio collassa e non c'è nulla da disegnare.
+    const pad = Math.abs(min) > 1e-9 ? Math.abs(min) * 0.05 : 0.5;
+    min -= pad;
+    max += pad;
+  }
+
+  const span = max - min;
+  const rawStep = span / (MAX_AXIS_TICKS - 1);
+  const magnitude = Math.pow(10, Math.floor(Math.log10(rawStep)));
+
+  // Scala 1-2-5: il passo più piccolo che tiene i tick entro il tetto.
+  const LADDER = [1, 2, 5];
+  let step = magnitude;
+  let ticks: number[] = [];
+  search: for (let decade = 0; decade < 10; decade++) {
+    for (const multiplier of LADDER) {
+      step = multiplier * magnitude * Math.pow(10, decade);
+      const niceMin = Math.floor(min / step) * step;
+      const niceMax = Math.ceil(max / step) * step;
+      const candidate: number[] = [];
+      for (let v = niceMin; v <= niceMax + step * 0.5; v += step) {
+        // toFixed ripulisce il residuo float della scala (0.1 → 0.30000000000000004).
+        candidate.push(Number(v.toFixed(6)));
+      }
+      if (candidate.length <= MAX_AXIS_TICKS) {
+        ticks = candidate;
+        break search;
+      }
+    }
+  }
+  if (ticks.length === 0) {
+    ticks = [min, max];
+  }
+
+  return {
+    min: ticks[0],
+    max: ticks[ticks.length - 1],
+    ticks,
+  };
+}
+
+/** Cifre decimali necessarie per distinguere due tick consecutivi. */
+function decimalsForStep(step: number): number {
+  if (!isFinite(step) || step <= 0) return 0;
+  return Math.max(0, Math.min(3, -Math.floor(Math.log10(step))));
+}
 
 export default function ArnieScreen() {
   const colorScheme = useColorScheme();
@@ -95,16 +188,18 @@ export default function ArnieScreen() {
 
       if (result.success && result.data && result.data.length > 0) {
         setBeehives(result.data);
-        if (!selectedHiveId || !result.data.some((h) => h.id === selectedHiveId)) {
-          setSelectedHiveId(result.data[0].id);
-        }
+        // Aggiornamento funzionale: evita di legare loadData a selectedHiveId,
+        // che farebbe ripartire il caricamento a ogni cambio arnia.
+        setSelectedHiveId((prev) =>
+          !prev || !result.data!.some((h) => h.id === prev) ? result.data![0].id : prev
+        );
       }
     } catch {
       // Graceful fallback
     } finally {
       setLoading(false);
     }
-  }, [selectedHiveId]);
+  }, []);
 
   const loadHiveActivities = useCallback(async (id: string) => {
     try {
@@ -148,6 +243,9 @@ export default function ArnieScreen() {
     if (selectedHiveId) {
       await loadHiveActivities(selectedHiveId);
     }
+    // loadData non carica più le serie: senza questo la curva mostrerebbe gli
+    // stessi punti di prima del pull-to-refresh.
+    setChartRefreshToken((n) => n + 1);
     setRefreshing(false);
   };
 
@@ -232,29 +330,78 @@ export default function ArnieScreen() {
     return beehives.filter((h) => getHiveStatus(h).type === 'warning').length || 1;
   }, [beehives, getHiveStatus]);
 
-  // Chart data extraction based on selected metric for Detail view
-  const chartSeries = useMemo(() => {
-    if (!currentHive) return [];
-    if (selectedMetric === 'temperature') return currentHive.temperature || [];
-    if (selectedMetric === 'weight') return currentHive.weight || [];
-    return currentHive.humidity || [];
-  }, [currentHive, selectedMetric]);
+  // Serie del grafico: caricata su richiesta per (arnia, metrica). Si prende lo
+  // storico disponibile e il periodo lo seleziona filteredSeries: così il server
+  // non ha da filtrare e un cambio di range non richiede nuovi dati.
+  const [chartSeries, setChartSeries] = useState<SensorReading[]>([]);
+  const [chartSeriesLoading, setChartSeriesLoading] = useState(false);
+  const [chartSeriesError, setChartSeriesError] = useState<string | null>(null);
+  // Incrementato dal pull-to-refresh: la serie va ricaricata anche quando la
+  // metrica non cambia.
+  const [chartRefreshToken, setChartRefreshToken] = useState(0);
 
-  // Filter series by time range
+  // Token incrementato a ogni richiesta: le risposte che arrivano dopo un cambio
+  // di metrica/arnia non devono poter sovrascrivere la serie corrente.
+  const chartRequestId = useRef(0);
+  const chartHiveId = currentHive?.id ?? null;
+
+  useEffect(() => {
+    if (viewMode !== 'detail' || !chartHiveId) {
+      setChartSeries([]);
+      return;
+    }
+
+    const requestId = ++chartRequestId.current;
+    setChartSeriesLoading(true);
+    setChartSeriesError(null);
+
+    loadSensorSeries(chartHiveId, selectedMetric as SensorMetric)
+      .then((result) => {
+        if (requestId !== chartRequestId.current) return;
+        if (!result.success) {
+          setChartSeries([]);
+          setChartSeriesError(result.error ?? 'Errore nel caricamento dei dati');
+          return;
+        }
+        setChartSeries(result.data ?? []);
+      })
+      .catch((e: { message?: string } | null) => {
+        if (requestId !== chartRequestId.current) return;
+        setChartSeries([]);
+        setChartSeriesError(e?.message ?? 'Errore di rete');
+      })
+      .finally(() => {
+        if (requestId !== chartRequestId.current) return;
+        setChartSeriesLoading(false);
+      });
+  }, [viewMode, chartHiveId, selectedMetric, chartRefreshToken]);
+
+  // La finestra è ancorata all'ultima lettura ricevuta, non a Date.now(): il clock
+  // del dispositivo e quello del server non coincidono, e un riferimento
+  // relativo all'orologio locale può escludere tutte le letture.
   const filteredSeries = useMemo(() => {
     if (!chartSeries || chartSeries.length === 0) return [];
-    const timeSeries = [...chartSeries].sort(
-      (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-    );
-    if (selectedRange === 'Tutto') return timeSeries;
-    const lastTs = new Date(timeSeries[timeSeries.length - 1].timestamp).getTime();
-    let hours = 24;
-    if (selectedRange === '7 giorni') hours = 24 * 7;
-    if (selectedRange === '30 giorni') hours = 24 * 30;
+    const timeSeries = chartSeries
+      .filter((p) => isFinite(new Date(p.timestamp).getTime()) && isFinite(p.value))
+      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    if (timeSeries.length === 0) return [];
 
+    const hours = RANGE_TO_HOURS[selectedRange];
+    if (hours == null) return timeSeries;
+    const lastTs = new Date(timeSeries[timeSeries.length - 1].timestamp).getTime();
     const cutoff = lastTs - hours * 3600 * 1000;
     return timeSeries.filter((p) => new Date(p.timestamp).getTime() >= cutoff);
   }, [chartSeries, selectedRange]);
+
+  // Ultima lettura disponibile, per distinguere "periodo vuoto" da "nessun dato".
+  const lastReadingAt = useMemo(() => {
+    if (chartSeries.length === 0) return null;
+    const times = chartSeries
+      .map((p) => new Date(p.timestamp).getTime())
+      .filter((t) => isFinite(t));
+    if (times.length === 0) return null;
+    return new Date(Math.max(...times));
+  }, [chartSeries]);
 
   // Metric stats (min, avg, max)
   const stats = useMemo(() => {
@@ -262,15 +409,16 @@ export default function ArnieScreen() {
       return { min: null, avg: null, max: null };
     }
     const values = filteredSeries.map((s) => s.value);
+    const decimals = METRIC_STYLE[selectedMetric].decimals;
     const min = Math.min(...values);
     const max = Math.max(...values);
     const avg = values.reduce((a, b) => a + b, 0) / values.length;
     return {
-      min: parseFloat(min.toFixed(1)),
-      avg: parseFloat(avg.toFixed(1)),
-      max: parseFloat(max.toFixed(1)),
+      min: parseFloat(min.toFixed(decimals)),
+      avg: parseFloat(avg.toFixed(decimals)),
+      max: parseFloat(max.toFixed(decimals)),
     };
-  }, [filteredSeries]);
+  }, [filteredSeries, selectedMetric]);
 
   const handleSaveNote = async () => {
     if (!noteText.trim()) {
@@ -368,25 +516,59 @@ export default function ArnieScreen() {
   // SVG Chart Dimensions & Helpers
   const chartWidth = Math.max(screenWidth - 64, 300);
   const chartHeight = 150;
-  const paddingX = 30;
+  // Il gutter sinistro ospita l'etichetta dell'asse Y: "42.35 kg" a 10px sta in ~38px,
+  // quindi 30px di padding non bastavano e le etichette finivano tagliate.
+  const paddingX = 48;
   const paddingY = 20;
+  const plotWidth = chartWidth - paddingX * 2;
+  const plotHeight = chartHeight - paddingY * 2;
+  const plotBottom = chartHeight - paddingY;
+
+  const metricStyle = METRIC_STYLE[selectedMetric];
+
+  // Dominio dell'asse Y: dai dati reali, arrotondato su valori leggibili. Le tick
+  // alimentano sia le linee della griglia sia le etichette, così i due non possono
+  // divergere — è quello che faceva comparire i gradi su peso e umidità.
+  const yAxis = useMemo(() => {
+    if (filteredSeries.length === 0) {
+      return { ticks: [0, 1], yFor: () => plotBottom };
+    }
+    const values = filteredSeries.map((d) => d.value);
+    const { min, max, ticks } = buildAxisTicks(Math.min(...values), Math.max(...values));
+    const span = max - min || 1;
+    const yFor = (value: number) => plotBottom - ((value - min) / span) * plotHeight;
+    return { ticks, yFor };
+  }, [filteredSeries, plotBottom, plotHeight]);
+
+  const yAxisLabelDecimals = useMemo(() => {
+    if (yAxis.ticks.length < 2) return 0;
+    return decimalsForStep(yAxis.ticks[1] - yAxis.ticks[0]);
+  }, [yAxis.ticks]);
 
   const chartPoints = useMemo(() => {
-    if (!filteredSeries || filteredSeries.length === 0) return [];
-    const values = filteredSeries.map((d) => d.value);
-    const minVal = Math.min(...values) - 0.5;
-    const maxVal = Math.max(...values) + 0.5;
-    const valRange = maxVal - minVal || 1;
+    if (filteredSeries.length === 0) return [];
 
-    const stepX = (chartWidth - paddingX * 2) / Math.max(filteredSeries.length - 1, 1);
+    // X posizionato sul tempo, non sull'indice: con letture irregolari (nodo offline,
+    // campionamento variabile) l'indice distanzierebbe in modo falso i punti, e le
+    // guide delle note — già calcolate sul tempo — non combacerebbero con la curva.
+    const times = filteredSeries.map((d) => new Date(d.timestamp).getTime());
+    const firstTime = times[0];
+    const timeSpan = times[times.length - 1] - firstTime;
+    const indexStep = plotWidth / Math.max(filteredSeries.length - 1, 1);
 
     return filteredSeries.map((d, index) => {
-      const x = paddingX + index * stepX;
-      const progressY = (d.value - minVal) / valRange;
-      const y = chartHeight - paddingY - progressY * (chartHeight - paddingY * 2);
-      return { x, y, value: d.value, timestamp: d.timestamp };
+      const x =
+        timeSpan > 0
+          ? paddingX + ((times[index] - firstTime) / timeSpan) * plotWidth
+          : paddingX + index * indexStep;
+      return {
+        x,
+        y: yAxis.yFor(d.value),
+        value: d.value,
+        timestamp: d.timestamp,
+      };
     });
-  }, [filteredSeries, chartWidth, chartHeight]);
+  }, [filteredSeries, plotWidth, paddingX, yAxis]);
 
   // Build SVG smooth path
   const { linePath, areaPath } = useMemo(() => {
@@ -405,21 +587,24 @@ export default function ArnieScreen() {
 
     const lastX = chartPoints[chartPoints.length - 1].x;
     const firstX = chartPoints[0].x;
-    const area = `${d} L ${lastX} ${chartHeight - 5} L ${firstX} ${chartHeight - 5} Z`;
+    const area = `${d} L ${lastX} ${plotBottom} L ${firstX} ${plotBottom} Z`;
 
     return { linePath: d, areaPath: area };
-  }, [chartPoints, chartHeight]);
+  }, [chartPoints, plotBottom]);
 
   // Dynamic X axis labels based on the filtered time range
   const xAxisLabels = useMemo(() => {
-    if (!filteredSeries || filteredSeries.length === 0) return ['', '', ''];
+    if (filteredSeries.length === 0) return ['', '', ''];
     const format = (ts: Date | string | number) => {
       const d = new Date(ts);
       const date = d.toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit' });
+      // Su 30 giorni e "Tutto" l'ora aggiungerebbe rumore: la data basta.
       if (selectedRange === '30 giorni' || selectedRange === 'Tutto') return date;
       const time = d.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
       return `${date} ${time}`;
     };
+    // I tick dell'asse X sono ancorati agli estremi della serie filtrata, non a
+    // indici fissi: così descrivono l'intervallo effettivamente disegnato.
     const mid = Math.floor((filteredSeries.length - 1) / 2);
     return [
       format(filteredSeries[0].timestamp),
@@ -448,26 +633,20 @@ export default function ArnieScreen() {
     const lastTs = new Date(filteredSeries[filteredSeries.length - 1].timestamp).getTime();
     const span = lastTs - firstTs;
     if (!isFinite(firstTs) || !isFinite(lastTs) || span <= 0) return [];
-    const plotWidth = chartWidth - paddingX * 2;
     const markers: { x: number; y: number; note: AttivitaResponse }[] = [];
     for (const note of activities) {
       if (!note.timestamp) continue;
       const ts = new Date(note.timestamp).getTime();
       if (!isFinite(ts) || ts < firstTs || ts > lastTs) continue;
       const ratio = (ts - firstTs) / span;
-      const x = Math.max(paddingX, Math.min(chartWidth - paddingX, paddingX + ratio * plotWidth));
+      const x = Math.max(paddingX, Math.min(paddingX + plotWidth, paddingX + ratio * plotWidth));
       markers.push({ x, y: 26, note });
     }
     return markers;
-  }, [activities, filteredSeries, chartWidth]);
+  }, [activities, filteredSeries, plotWidth, paddingX]);
 
-  const chartUnit = selectedMetric === 'temperature' ? '°C' : selectedMetric === 'weight' ? 'kg' : '%';
-  const chartLineColor =
-    selectedMetric === 'temperature'
-      ? '#EF4444'
-      : selectedMetric === 'weight'
-      ? '#0D9488'
-      : '#0284C7';
+  const chartUnit = metricStyle.unit;
+  const chartLineColor = metricStyle.color;
 
   const formatPointTime = (d: Date) => {
     return (
@@ -497,11 +676,10 @@ export default function ArnieScreen() {
 
     if (locX == null || locY == null) return;
 
-    const stepX =
-      chartPoints.length > 1
-        ? (chartWidth - paddingX * 2) / (chartPoints.length - 1)
-        : chartWidth;
-    const xTolerance = Math.max(22, stepX * 0.5);
+    // Con X posizionato sul tempo i punti non sono equidistanti: il passo medio
+    // serve solo come tolleranza, il confronto vero resta la distanza punto-punto.
+    const averageStep = plotWidth / Math.max(chartPoints.length - 1, 1);
+    const xTolerance = Math.max(22, averageStep * 0.5);
     const yTolerance = 55;
 
     let bestIndex = -1;
@@ -992,7 +1170,7 @@ export default function ArnieScreen() {
 
             {/* Time Range Filter Bar */}
             <View style={styles.rangeFilterContainer}>
-              {(['24 ore', '7 giorni', '30 giorni', 'Tutto'] as TimeRange[]).map((r) => {
+              {TIME_RANGES.map((r) => {
                 const isSelected = selectedRange === r;
                 return (
                   <TouchableOpacity
@@ -1017,19 +1195,37 @@ export default function ArnieScreen() {
 
             {/* Chart Card */}
             <View style={[styles.chartCard, { backgroundColor: cardBg, borderColor }]}>
-              <ThemedText style={styles.chartTitle}>
-                {selectedMetric === 'temperature'
-                  ? 'Andamento temperatura'
-                  : selectedMetric === 'weight'
-                  ? 'Andamento peso'
-                  : 'Andamento umidità'}
-              </ThemedText>
+              <View style={styles.chartTitleRow}>
+                <ThemedText style={styles.chartTitle}>
+                  {selectedMetric === 'temperature'
+                    ? 'Andamento temperatura'
+                    : selectedMetric === 'weight'
+                    ? 'Andamento peso'
+                    : 'Andamento umidità'}
+                </ThemedText>
+                {chartSeriesLoading ? (
+                  <ActivityIndicator size="small" color={chartLineColor} />
+                ) : null}
+              </View>
 
               {filteredSeries.length === 0 ? (
                 <View style={styles.noDataContainer}>
-                  <Ionicons name="cloud-offline-outline" size={34} color="#9CA3AF" />
+                  <Ionicons
+                    name={chartSeriesError ? 'alert-circle-outline' : 'cloud-offline-outline'}
+                    size={34}
+                    color="#9CA3AF"
+                  />
                   <ThemedText style={[styles.noDataText, { color: textSecondary }]}>
-                    Nessun dato nel periodo selezionato
+                    {chartSeriesLoading
+                      ? 'Caricamento dati...'
+                      : chartSeriesError
+                      ? `Impossibile caricare i dati: ${chartSeriesError}`
+                      : lastReadingAt
+                      ? `Nessuna lettura nel periodo selezionato. Ultima lettura: ${lastReadingAt.toLocaleString(
+                          'it-IT',
+                          { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }
+                        )}`
+                      : 'Nessun dato disponibile per questa arnia'}
                   </ThemedText>
                 </View>
               ) : (
@@ -1046,36 +1242,40 @@ export default function ArnieScreen() {
                     <SvgGradient id="chartGradient" x1="0" y1="0" x2="0" y2="1">
                       <Stop
                         offset="0%"
-                        stopColor={selectedMetric === 'temperature' ? '#EF4444' : selectedMetric === 'weight' ? '#0D9488' : '#0284C7'}
+                        stopColor={chartLineColor}
                         stopOpacity="0.25"
                       />
                       <Stop
                         offset="100%"
-                        stopColor={selectedMetric === 'temperature' ? '#EF4444' : selectedMetric === 'weight' ? '#0D9488' : '#0284C7'}
+                        stopColor={chartLineColor}
                         stopOpacity="0.0"
                       />
                     </SvgGradient>
                   </Defs>
 
-                  {/* Grid Lines */}
-                  {[30, 60, 90, 120].map((y, i) => (
-                    <G key={i}>
-                      <SvgLine
-                        x1={paddingX}
-                        y1={y}
-                        x2={chartWidth - 10}
-                        y2={y}
-                        stroke={isDark ? '#333' : '#F1F5F9'}
-                        strokeWidth="1"
-                      />
-                    </G>
-                  ))}
-
-                  {/* Y Axis Labels */}
-                  <SvgText x="4" y="32" fontSize="10" fill={textSecondary}>36.0 °C</SvgText>
-                  <SvgText x="4" y="62" fontSize="10" fill={textSecondary}>35.0 °C</SvgText>
-                  <SvgText x="4" y="92" fontSize="10" fill={textSecondary}>34.0 °C</SvgText>
-                  <SvgText x="4" y="122" fontSize="10" fill={textSecondary}>33.0 °C</SvgText>
+                  {/* Grid Lines + Y Axis Labels, entrambi dalle stesse tick del dominio reale */}
+                  {yAxis.ticks.map((tick, i) => {
+                    const tickY = yAxis.yFor(tick);
+                    return (
+                      <G key={`tick-${i}`}>
+                        <SvgLine
+                          x1={paddingX}
+                          y1={tickY}
+                          x2={chartWidth - 10}
+                          y2={tickY}
+                          stroke={isDark ? '#333' : '#F1F5F9'}
+                          strokeWidth="1"
+                        />
+                        <SvgText
+                          x={4}
+                          y={tickY + 3}
+                          fontSize="10"
+                          fill={textSecondary}>
+                          {`${tick.toFixed(yAxisLabelDecimals)} ${chartUnit}`}
+                        </SvgText>
+                      </G>
+                    );
+                  })}
 
                   {/* Filled Area */}
                   {areaPath ? <Path d={areaPath} fill="url(#chartGradient)" /> : null}
@@ -1085,7 +1285,7 @@ export default function ArnieScreen() {
                     <Path
                       d={linePath}
                       fill="none"
-                      stroke={selectedMetric === 'temperature' ? '#EF4444' : selectedMetric === 'weight' ? '#0D9488' : '#0284C7'}
+                      stroke={chartLineColor}
                       strokeWidth="2.5"
                       strokeLinecap="round"
                       strokeLinejoin="round"
@@ -1099,7 +1299,7 @@ export default function ArnieScreen() {
                       cx={pt.x}
                       cy={pt.y}
                       r="3.5"
-                      fill={selectedMetric === 'temperature' ? '#EF4444' : selectedMetric === 'weight' ? '#0D9488' : '#0284C7'}
+                      fill={chartLineColor}
                       stroke="#FFFFFF"
                       strokeWidth="1.5"
                     />
@@ -1112,7 +1312,7 @@ export default function ArnieScreen() {
                       x1={m.x}
                       y1={m.y}
                       x2={m.x}
-                      y2={chartHeight - paddingY}
+                      y2={plotBottom}
                       stroke="#3B82F6"
                       strokeWidth="1.5"
                       strokeDasharray="4 4"
@@ -1153,7 +1353,7 @@ export default function ArnieScreen() {
                     <View style={[styles.chartTooltipDot, { backgroundColor: chartLineColor }]} />
                     <View style={{ flex: 1 }}>
                       <ThemedText style={styles.chartTooltipValue}>
-                        {chartSelected.value.toFixed(1)} {chartUnit}
+                        {chartSelected.value.toFixed(metricStyle.decimals)} {chartUnit}
                       </ThemedText>
                       <ThemedText style={styles.chartTooltipTime}>
                         {formatPointTime(chartSelected.timestamp)}
@@ -1167,7 +1367,13 @@ export default function ArnieScreen() {
               {/* X Axis Timestamps */}
               <View style={styles.xAxisRow}>
                 {xAxisLabels.map((label, i) => (
-                  <ThemedText key={i} style={[styles.xAxisText, { color: textSecondary }]}>
+                  <ThemedText
+                    key={i}
+                    style={[
+                      styles.xAxisText,
+                      i === 1 && styles.xAxisTextMid,
+                      { color: textSecondary },
+                    ]}>
                     {label}
                   </ThemedText>
                 ))}
@@ -1180,27 +1386,21 @@ export default function ArnieScreen() {
                 <View style={styles.statCol}>
                   <ThemedText style={[styles.statLabel, { color: textSecondary }]}>Min</ThemedText>
                   <ThemedText style={styles.statValue}>
-                    {stats.min != null
-                      ? `${stats.min} ${selectedMetric === 'temperature' ? '°C' : selectedMetric === 'weight' ? 'kg' : '%'}`
-                      : 'N/D'}
+                    {stats.min != null ? `${stats.min} ${chartUnit}` : 'N/D'}
                   </ThemedText>
                 </View>
 
                 <View style={styles.statCol}>
                   <ThemedText style={[styles.statLabel, { color: textSecondary }]}>Media</ThemedText>
                   <ThemedText style={styles.statValue}>
-                    {stats.avg != null
-                      ? `${stats.avg} ${selectedMetric === 'temperature' ? '°C' : selectedMetric === 'weight' ? 'kg' : '%'}`
-                      : 'N/D'}
+                    {stats.avg != null ? `${stats.avg} ${chartUnit}` : 'N/D'}
                   </ThemedText>
                 </View>
 
                 <View style={styles.statCol}>
                   <ThemedText style={[styles.statLabel, { color: textSecondary }]}>Max</ThemedText>
                   <ThemedText style={styles.statValue}>
-                    {stats.max != null
-                      ? `${stats.max} ${selectedMetric === 'temperature' ? '°C' : selectedMetric === 'weight' ? 'kg' : '%'}`
-                      : 'N/D'}
+                    {stats.max != null ? `${stats.max} ${chartUnit}` : 'N/D'}
                   </ThemedText>
                 </View>
               </View>
@@ -2211,10 +2411,15 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 2,
   },
+  chartTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
   chartTitle: {
     fontSize: 16,
     fontWeight: '700',
-    marginBottom: 12,
   },
   svgGraphContainer: {
     alignItems: 'center',
@@ -2298,6 +2503,9 @@ const styles = StyleSheet.create({
   xAxisText: {
     fontSize: 11,
     fontWeight: '500',
+  },
+  xAxisTextMid: {
+    textAlign: 'center',
   },
   statsSummaryRow: {
     flexDirection: 'row',
