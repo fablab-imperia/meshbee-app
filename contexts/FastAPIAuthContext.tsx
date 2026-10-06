@@ -3,7 +3,8 @@
  * Versione per backend FastAPI
  */
 
-import React, { createContext, useState, useEffect, useContext, ReactNode } from 'react';
+import React, { createContext, useState, useEffect, useContext, ReactNode, useRef } from 'react';
+import { AppState, AppStateStatus } from 'react-native';
 import { UserResponse } from '@/types/api';
 import {
   signIn as authSignIn,
@@ -57,11 +58,25 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const [user, setUser] = useState<UserResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const appState = useRef(AppState.currentState);
 
   // Carica utente all'avvio
   useEffect(() => {
     loadInitialUser();
+    const subscription = AppState.addEventListener('change', handleAppStateChange);
+    return () => subscription.remove();
   }, []);
+
+  const handleAppStateChange = async (nextAppState: AppStateStatus) => {
+    if (appState.current.match(/active/) && nextAppState.match(/inactive|background/)) {
+      try {
+        await signOut();
+      } catch (error) {
+        console.error('Errore durante il logout automatico:', error);
+      }
+    }
+    appState.current = nextAppState;
+  };
 
   // TEMPORANEAMENTE DISABILITATO - Richiede migrazione Supabase
   // Registra per notifiche push quando l'utente è autenticato
