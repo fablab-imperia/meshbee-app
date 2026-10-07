@@ -983,20 +983,23 @@ const styles = StyleSheet.create({
   modalContent: {
     width: '100%',
     maxWidth: 440,
-    maxHeight: '88%',
+    maxHeight: '90%',
     borderRadius: 18,
-    padding: 20,
+    padding: 0,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.2,
     shadowRadius: 8,
     elevation: 6,
+    overflow: 'hidden',
   },
   modalScrollView: {
     width: '100%',
+    flex: 1,
   },
   modalScrollContent: {
-    paddingBottom: 8,
+    padding: 20,
+    paddingBottom: 24,
   },
   modalTitle: { marginBottom: 16, textAlign: 'center', fontWeight: '700' },
   errorBanner: {
