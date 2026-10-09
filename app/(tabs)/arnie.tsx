@@ -180,6 +180,8 @@ export default function ArnieScreen() {
   const [isSubmittingNote, setIsSubmittingNote] = useState(false);
 
   const screenWidth = Dimensions.get('window').width;
+  const screenHeight = Dimensions.get('window').height;
+  const noteModalHeight = Math.round(screenHeight * 0.8);
 
   const loadData = useCallback(async () => {
     try {
@@ -1626,7 +1628,13 @@ export default function ArnieScreen() {
         visible={noteModalVisible}
         onRequestClose={() => setNoteModalVisible(false)}>
         <View style={styles.modalOverlay}>
-          <ThemedView style={styles.noteModalCard}>
+          <ThemedView style={[styles.noteModalCard, { height: noteModalHeight, maxHeight: noteModalHeight }]}>
+            <ScrollView
+              style={styles.noteModalScroll}
+              contentContainerStyle={styles.noteModalScrollContent}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={true}
+              persistentScrollbar={true}>
             <ThemedText style={styles.modalTitleText}>Nuova nota manuale</ThemedText>
 
             <ThemedText style={styles.inputFieldLabel}>Arnia</ThemedText>
@@ -1839,6 +1847,7 @@ export default function ArnieScreen() {
                 )}
               </TouchableOpacity>
             </View>
+            </ScrollView>
           </ThemedView>
         </View>
       </Modal>
@@ -2696,6 +2705,13 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.2,
     shadowRadius: 8,
     elevation: 6,
+  },
+  noteModalScroll: {
+    width: '100%',
+    flex: 1,
+  },
+  noteModalScrollContent: {
+    paddingBottom: 4,
   },
   modalTitleText: {
     fontSize: 18,

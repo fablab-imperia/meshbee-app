@@ -10,6 +10,7 @@ import {
   Modal,
   Platform,
   Alert,
+  useWindowDimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Ionicons from '@expo/vector-icons/Ionicons';
@@ -78,6 +79,8 @@ export default function NoteScreen() {
 
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
+  const { height: windowHeight } = useWindowDimensions();
+  const modalHeight = Math.round(windowHeight * 0.8);
 
   useEffect(() => {
     loadAllNotes();
@@ -567,12 +570,13 @@ export default function NoteScreen() {
         visible={modalVisible}
         onRequestClose={() => setModalVisible(false)}>
         <View style={styles.modalOverlay}>
-          <ThemedView style={styles.modalContent}>
+          <ThemedView style={[styles.modalContent, { height: modalHeight, maxHeight: modalHeight }]}>
             <ScrollView
               style={styles.modalScrollView}
               contentContainerStyle={styles.modalScrollContent}
               keyboardShouldPersistTaps="handled"
-              showsVerticalScrollIndicator={false}>
+              showsVerticalScrollIndicator={true}
+              persistentScrollbar={true}>
               <ThemedText type="subtitle" style={styles.modalTitle}>
                 {editingNote ? 'Modifica Nota' : 'Nuova Nota'}
               </ThemedText>
@@ -983,7 +987,6 @@ const styles = StyleSheet.create({
   modalContent: {
     width: '100%',
     maxWidth: 440,
-    maxHeight: '90%',
     borderRadius: 18,
     padding: 0,
     shadowColor: '#000',
