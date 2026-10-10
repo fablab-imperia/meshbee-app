@@ -1,5 +1,6 @@
 import { useAuth } from '@/contexts/FastAPIAuthContext';
 import { MeshBeeLogo } from '@/components/MeshBeeLogo';
+import { APP_VERSION_LABEL } from '@/config/version';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { validateEmail } from '@/services/fastapi-auth-service';
 import { useRouter } from 'expo-router';
@@ -176,7 +177,10 @@ export default function LoginScreen() {
           </TouchableOpacity>
         </View>
 
-   
+        {/* Version */}
+        <Text style={[styles.version, { color: colors.textSecondary }]}>
+          {APP_VERSION_LABEL}
+        </Text>
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -271,5 +275,10 @@ const styles = StyleSheet.create({
   registerLink: {
     fontSize: 14,
     fontWeight: '600',
+  },
+  version: {
+    fontSize: 13,
+    textAlign: 'center',
+    marginTop: 8,
   },
 });
