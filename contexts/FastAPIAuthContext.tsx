@@ -10,9 +10,14 @@ import {
   signIn as authSignIn,
   signOut as authSignOut,
   getCurrentUser,
-  isAuthenticated as checkAuth,
   getUserProfile,
 } from '@/services/fastapi-auth-service';
+import {
+  setUnauthorizedHandler,
+  getAccessToken,
+  isAccessTokenExpired,
+  clearTokens,
+} from '@/services/api-client';
 // TEMPORANEAMENTE DISABILITATO - Richiede migrazione Supabase
 // import { registerForPushNotifications } from '@/services/notification-service';
 
@@ -63,19 +68,34 @@ export function AuthProvider({ children }: AuthProviderProps) {
   // Carica utente all'avvio
   useEffect(() => {
     loadInitialUser();
+
+    // Se la sessione viene invalidata (token scaduto o 401) ripristina subito
+    // lo stato di disconnessione, così la guardia riporta al login.
+    setUnauthorizedHandler(() => {
+      setUser(null);
+      setIsAuthenticated(false);
+    });
+
     const subscription = AppState.addEventListener('change', handleAppStateChange);
-    return () => subscription.remove();
+    return () => {
+      subscription.remove();
+      setUnauthorizedHandler(null);
+    };
   }, []);
 
   const handleAppStateChange = async (nextAppState: AppStateStatus) => {
-    if (appState.current.match(/active/) && nextAppState.match(/inactive|background/)) {
+    const prev = appState.current;
+    appState.current = nextAppState;
+
+    // Al ritorno in primo piano la sessione resta valida finché l'access token non
+    // scade: in quel caso `restoreSession` la invalida e la guardia riporta al login.
+    if (nextAppState === 'active' && (prev === 'inactive' || prev === 'background')) {
       try {
-        await signOut();
+        await restoreSession();
       } catch (error) {
-        console.error('Errore durante il logout automatico:', error);
+        console.error('Errore durante il ripristino della sessione:', error);
       }
     }
-    appState.current = nextAppState;
   };
 
   // TEMPORANEAMENTE DISABILITATO - Richiede migrazione Supabase
@@ -102,8 +122,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
     try {
       setLoading(true);
 
-      // Verifica se è autenticato
-      const authenticated = await checkAuth();
+      // Verifica che esista un access token non scaduto
+      const authenticated = await hasValidSession();
       setIsAuthenticated(authenticated);
 
       if (authenticated) {
@@ -118,6 +138,42 @@ export function AuthProvider({ children }: AuthProviderProps) {
     } finally {
       setLoading(false);
     }
+  }
+
+  /**
+   * Ripristina la sessione dopo un periodo di inattività o di background.
+   *
+   * La sessione resta valida finché l'access token non scade: in quel caso
+   * `hasValidSession` la invalida e la guardia riporta al login.
+   */
+  async function restoreSession() {
+    const authenticated = await hasValidSession();
+    setIsAuthenticated(authenticated);
+
+    if (authenticated) {
+      const currentUser = await getCurrentUser();
+      setUser(currentUser);
+    } else {
+      setUser(null);
+    }
+  }
+
+  /**
+   * True se è presente un access token non scaduto.
+   *
+   * Se il token è scaduto pulisce storage e stato, così l'utente torna al login
+   * invece di ricevere errori di rete incomprensibili.
+   */
+  async function hasValidSession(): Promise<boolean> {
+    const token = await getAccessToken();
+    if (!token) return false;
+
+    if (isAccessTokenExpired(token)) {
+      await clearTokens();
+      return false;
+    }
+
+    return true;
   }
 
   /**

@@ -13,6 +13,8 @@ const STORAGE_KEYS = {
   USER_DATA: '@beehive_user_data',
 };
 
+const SESSION_EXPIRED_MESSAGE = 'Sessione scaduta. Effettua nuovamente il login.';
+
 // ============================================================================
 // Storage per tokens
 // ============================================================================
@@ -78,6 +80,30 @@ export async function getUserData(): Promise<any | null> {
 }
 
 // ============================================================================
+// JWT
+// ============================================================================
+
+function decodeJwtPayload(token: string): Record<string, any> | null {
+  try {
+    const base64Url = token.split('.')[1];
+    if (!base64Url) return null;
+    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+    return JSON.parse(atob(base64));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * True se l'access token è già scaduto secondo il claim `exp` del JWT.
+ */
+export function isAccessTokenExpired(token: string): boolean {
+  const payload = decodeJwtPayload(token);
+  if (!payload || typeof payload.exp !== 'number') return false;
+  return payload.exp * 1000 <= Date.now();
+}
+
+// ============================================================================
 // API Client
 // ============================================================================
 
@@ -104,6 +130,7 @@ export class ApiClient {
   private baseUrl: string;
   private defaultHeaders: Record<string, string>;
   private timeout: number;
+  private unauthorizedHandler: (() => void) | null = null;
 
   constructor() {
     this.baseUrl = API_CONFIG.BASE_URL;
@@ -165,16 +192,28 @@ export class ApiClient {
     } = options;
 
     try {
-      const url = this.buildUrl(endpoint, params);
       const headers = await this.prepareHeaders(customHeaders, requiresAuth);
 
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), timeout);
+      // Se l'access token è già scaduto non inviare la richiesta: invalida la
+      // sessione e lascia che la UI riporti al login con un messaggio chiaro,
+      // invece di un errore di rete incomprensibile.
+      if (requiresAuth) {
+        const token = await getAccessToken();
+        if (token && isAccessTokenExpired(token)) {
+          await this.failSession();
+          return {
+            success: false,
+            error: SESSION_EXPIRED_MESSAGE,
+            statusCode: 401,
+          };
+        }
+      }
+
+      const url = this.buildUrl(endpoint, params);
 
       const requestOptions: RequestInit = {
         method,
         headers,
-        signal: controller.signal,
       };
 
       if (body && method !== 'GET') {
@@ -183,8 +222,7 @@ export class ApiClient {
 
       console.log(`🌐 API Request: ${method} ${url}`);
 
-      const response = await fetch(url, requestOptions);
-      clearTimeout(timeoutId);
+      let response = await this.fetchWithTimeout(url, requestOptions, timeout);
 
       // Parsing risposta
       let data: any;
@@ -199,6 +237,17 @@ export class ApiClient {
       // Gestione risposta non OK
       if (!response.ok) {
         console.error(`❌ API Error: ${response.status}`, data);
+
+        // 401 su una richiesta autenticata: token scaduto o revocato. Il
+        // backend non offre un refresh, quindi la sessione va invalidata.
+        if (requiresAuth && response.status === 401) {
+          await this.failSession();
+          return {
+            success: false,
+            error: SESSION_EXPIRED_MESSAGE,
+            statusCode: response.status,
+          };
+        }
 
         return {
           success: false,
@@ -230,6 +279,54 @@ export class ApiClient {
         error: error.message || 'Network error',
       };
     }
+  }
+
+  /**
+   * Esegue fetch con timeout, ritentando una volta i soli errori di rete.
+   *
+   * Al rientro dallo stato di background la connessione può essere stata
+   * resettata dal sistema: un singolo retry assorbe quei casi transitori senza
+   * mascherare un guasto reale (in quel caso il secondo fetch fallisce ancora).
+   */
+  private async fetchWithTimeout(
+    url: string,
+    requestOptions: RequestInit,
+    timeout: number
+  ): Promise<Response> {
+    const doFetch = (): Promise<Response> => {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeout);
+      return fetch(url, { ...requestOptions, signal: controller.signal }).finally(() => {
+        clearTimeout(timeoutId);
+      });
+    };
+
+    try {
+      return await doFetch();
+    } catch (error: any) {
+      // Un abort è un timeout voluto: ritentare non avrebbe senso.
+      if (error.name === 'AbortError') {
+        throw error;
+      }
+      // Piccola attesa per dare alla rete il tempo di stabilizzarsi.
+      await new Promise(resolve => setTimeout(resolve, 500));
+      return doFetch();
+    }
+  }
+
+  /**
+   * Invalida la sessione: cancella i token e notifica l'applicazione.
+   */
+  private async failSession(): Promise<void> {
+    await clearTokens();
+    this.unauthorizedHandler?.();
+  }
+
+  /**
+   * Handler chiamato quando la sessione non è più valida (token scaduto o 401).
+   */
+  setUnauthorizedHandler(handler: (() => void) | null): void {
+    this.unauthorizedHandler = handler;
   }
 
   /**
@@ -326,6 +423,14 @@ export class ApiClient {
 
 // Istanza singleton del client
 export const apiClient = new ApiClient();
+
+/**
+ * Registra un handler invocato quando la sessione viene invalidata
+ * (token scaduto o 401): permette al livello di autenticazione di tornare al login.
+ */
+export function setUnauthorizedHandler(handler: (() => void) | null): void {
+  apiClient.setUnauthorizedHandler(handler);
+}
 
 // =============================================================================
 // Utility functions

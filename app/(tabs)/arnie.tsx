@@ -51,6 +51,9 @@ type ViewMode = 'overview' | 'detail';
 
 const TIME_RANGES: TimeRange[] = ['24 ore', '7 giorni', '30 giorni', 'Tutto'];
 
+// Quante note mostrare nel riquadro "Note recenti" della scheda arnia.
+const RECENT_NOTES_LIMIT = 3;
+
 const RANGE_TO_HOURS: Record<TimeRange, number | null> = {
   '24 ore': 24,
   '7 giorni': 24 * 7,
@@ -1417,23 +1420,28 @@ export default function ArnieScreen() {
             </View>
 
             {activities.length > 0 ? (
-              <TouchableOpacity
-                style={[styles.recentNoteCard, { backgroundColor: cardBg, borderColor }]}
-                onPress={() => openNoteDetail(activities[0])}
-                activeOpacity={0.7}>
-                <View style={styles.recentNoteHeader}>
-                  <ThemedText style={styles.recentNoteTag}>
-                    {getTipologiaInfo(activities[0].tipo_attivita).icon}{' '}
-                    {getTipologiaInfo(activities[0].tipo_attivita).label}
-                  </ThemedText>
-                  <ThemedText style={[styles.recentNoteDate, { color: textSecondary }]}>
-                    {new Date(activities[0].timestamp).toLocaleDateString('it-IT', { day: '2-digit', month: 'short' })}
-                  </ThemedText>
-                </View>
-                <ThemedText style={styles.recentNoteDesc} numberOfLines={2}>
-                  {activities[0].descrizione}
-                </ThemedText>
-              </TouchableOpacity>
+              <View style={styles.recentNotesList}>
+                {activities.slice(0, RECENT_NOTES_LIMIT).map((activity) => (
+                  <TouchableOpacity
+                    key={activity.id_log}
+                    style={[styles.recentNoteCard, { backgroundColor: cardBg, borderColor }]}
+                    onPress={() => openNoteDetail(activity)}
+                    activeOpacity={0.7}>
+                    <View style={styles.recentNoteHeader}>
+                      <ThemedText style={styles.recentNoteTag}>
+                        {getTipologiaInfo(activity.tipo_attivita).icon}{' '}
+                        {getTipologiaInfo(activity.tipo_attivita).label}
+                      </ThemedText>
+                      <ThemedText style={[styles.recentNoteDate, { color: textSecondary }]}>
+                        {new Date(activity.timestamp).toLocaleDateString('it-IT', { day: '2-digit', month: 'short' })}
+                      </ThemedText>
+                    </View>
+                    <ThemedText style={styles.recentNoteDesc} numberOfLines={2}>
+                      {activity.descrizione}
+                    </ThemedText>
+                  </TouchableOpacity>
+                ))}
+              </View>
             ) : null}
 
             {/* Bottom Action Buttons Row */}
@@ -2551,11 +2559,14 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#2563EB',
   },
+  recentNotesList: {
+    gap: 10,
+    marginBottom: 16,
+  },
   recentNoteCard: {
     borderRadius: 14,
     borderWidth: 1,
     padding: 14,
-    marginBottom: 16,
   },
   recentNoteHeader: {
     flexDirection: 'row',
