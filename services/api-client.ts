@@ -301,10 +301,12 @@ export class ApiClient {
 
   async delete<T>(
     endpoint: string,
-    requiresAuth: boolean = false
+    requiresAuth: boolean = false,
+    params?: Record<string, any>
   ): Promise<ApiClientResponse<T>> {
     return this.executeRequest<T>(endpoint, {
       method: 'DELETE',
+      params,
       requiresAuth,
     });
   }

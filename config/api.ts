@@ -44,6 +44,8 @@ export const API_CONFIG = {
     ADMIN_UTENTI_DETAIL: '/api/admin/utenti/:id_utente',
     ADMIN_UTENTI_PASSWORD: '/api/admin/utenti/:id_utente/password',
     ADMIN_ARNIE: '/api/admin/arnie',
+    ADMIN_ARNIA_DETAIL: '/api/admin/arnie/:id_arnia',
+    ADMIN_UTENTI_ARNIE: '/api/admin/utenti-arnie',
     ADMIN_NODI: '/api/admin/nodi',
     ADMIN_LETTURE: '/api/admin/letture',
     ADMIN_ATTIVITA: '/api/admin/attivita',

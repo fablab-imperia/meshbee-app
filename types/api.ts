@@ -53,6 +53,26 @@ export interface PasswordChange {
 }
 
 // ============================================================================
+// Associazione Utente-Arnia
+// ============================================================================
+
+export interface UtenteArniaCreate {
+  id_utente: number;
+  id_arnia: number;
+  permessi?: 'read' | 'write' | 'admin';
+}
+
+export interface UtenteArniaResponse {
+  id: number;
+  id_utente: number;
+  id_arnia: number;
+  data_associazione: string;
+  data_disassociazione: string | null;
+  permessi: string;
+  attivo: boolean;
+}
+
+// ============================================================================
 // Arnie
 // ============================================================================
 

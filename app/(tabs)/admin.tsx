@@ -1,10 +1,12 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
+  ActivityIndicator,
   ScrollView,
   StyleSheet,
   View,
   TouchableOpacity,
   Modal,
+  RefreshControl,
   TextInput,
   Switch,
   Alert,
@@ -12,34 +14,112 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { useRouter } from 'expo-router';
 
 import { ThemedText } from '@/components/themed-text';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import {
+  loadAdminUsers,
+  createAdminUser,
+  updateAdminUser,
+  deleteAdminUser,
+  resetAdminUserPassword,
+  loadAdminArnie,
+  createAdminArnia,
+  deleteAdminArnia,
+  loadAdminUserArnie,
+  associateAdminUserArnia,
+  removeAdminUserArnia,
+} from '@/services/fastapi-admin-service';
+import type { ArniaConStato, UserResponse, UtenteArniaResponse } from '@/types/api';
+
+type UserRole = 'Amministratore' | 'Operatore';
 
 interface User {
   id: number;
   name: string;
   email: string;
-  role: 'Amministratore' | 'Operatore' | 'Visualizzatore';
+  role: UserRole;
   active: boolean;
   createdAt: string;
   lastAccess: string;
   initials: string;
 }
 
+/** Il backend espone solo i ruoli `admin` e `user`. */
+function roleFromApi(ruolo: string): UserRole {
+  const normalized = (ruolo || '').toLowerCase();
+  return normalized === 'admin' || normalized.includes('amministr')
+    ? 'Amministratore'
+    : 'Operatore';
+}
+
+function roleToApi(role: UserRole): 'admin' | 'user' {
+  return role === 'Amministratore' ? 'admin' : 'user';
+}
+
+function formatDate(value: string | null): string {
+  if (!value) return 'Mai';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString('it-IT', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function buildInitials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '?';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+}
+
+function mapUser(data: UserResponse): User {
+  const name = `${data.nome} ${data.cognome}`.trim();
+  return {
+    id: data.id_utente,
+    name,
+    email: data.email,
+    role: roleFromApi(data.ruolo),
+    active: data.attivo,
+    createdAt: formatDate(data.data_creazione),
+    lastAccess: formatDate(data.ultimo_accesso),
+    initials: buildInitials(name),
+  };
+}
+
+function showAlert(title: string, message: string) {
+  if (Platform.OS === 'web') alert(`${title}\n\n${message}`);
+  else Alert.alert(title, message);
+}
+
 export default function AdminScreen() {
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
-  const router = useRouter();
 
   // Active sub-modal view
   const [activeModal, setActiveModal] = useState<
-    'users' | 'user_detail' | 'new_user' | 'system' | 'logs' | 'backup' | null
+    | 'users'
+    | 'user_detail'
+    | 'new_user'
+    | 'arnie'
+    | 'arnia_detail'
+    | 'new_arnia'
+    | 'associate_user'
+    | 'system'
+    | 'logs'
+    | 'backup'
+    | null
   >(null);
 
   // Users state
   const [users, setUsers] = useState<User[]>([]);
+  const [usersLoading, setUsersLoading] = useState(false);
+  const [usersRefreshing, setUsersRefreshing] = useState(false);
+  const [usersError, setUsersError] = useState<string | null>(null);
 
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [searchUserQuery, setSearchUserQuery] = useState('');
@@ -47,8 +127,224 @@ export default function AdminScreen() {
   // New user form state
   const [newUserName, setNewUserName] = useState('');
   const [newUserEmail, setNewUserEmail] = useState('');
-  const [newUserRole, setNewUserRole] = useState<'Amministratore' | 'Operatore' | 'Visualizzatore'>('Operatore');
+  const [newUserPassword, setNewUserPassword] = useState('');
+  const [newUserRole, setNewUserRole] = useState<UserRole>('Operatore');
   const [newUserActive, setNewUserActive] = useState(true);
+
+  // Reset password state
+  const [resetPassword, setResetPassword] = useState('');
+
+  // Arnie state
+  const [arnie, setArnie] = useState<ArniaConStato[]>([]);
+  const [associations, setAssociations] = useState<UtenteArniaResponse[]>([]);
+  const [arnieLoading, setArnieLoading] = useState(false);
+  const [arnieRefreshing, setArnieRefreshing] = useState(false);
+  const [arnieError, setArnieError] = useState<string | null>(null);
+  const [searchArniaQuery, setSearchArniaQuery] = useState('');
+  const [selectedArnia, setSelectedArnia] = useState<ArniaConStato | null>(null);
+  const [associateSearch, setAssociateSearch] = useState('');
+
+  // New arnia form state
+  const [newArniaNome, setNewArniaNome] = useState('');
+  const [newArniaNodo, setNewArniaNodo] = useState('');
+  const [newArniaSensore, setNewArniaSensore] = useState('');
+  const [newArniaPosizione, setNewArniaPosizione] = useState('');
+  const [newArniaDescrizione, setNewArniaDescrizione] = useState('');
+
+  const loadArnie = useCallback(async () => {
+    setArnieLoading(true);
+    setArnieError(null);
+    const [arnieResult, assocResult] = await Promise.all([
+      loadAdminArnie(),
+      loadAdminUserArnie(),
+    ]);
+
+    if (arnieResult.success && arnieResult.data) {
+      setArnie(arnieResult.data);
+    } else {
+      setArnie([]);
+      setArnieError(arnieResult.error || 'Impossibile caricare le arnie');
+    }
+
+    if (assocResult.success && assocResult.data) {
+      setAssociations(assocResult.data);
+    } else {
+      setAssociations([]);
+    }
+
+    setArnieLoading(false);
+  }, []);
+
+  useEffect(() => {
+    if (activeModal === 'arnie') {
+      loadArnie();
+    }
+  }, [activeModal, loadArnie]);
+
+  const onRefreshArnie = useCallback(async () => {
+    setArnieRefreshing(true);
+    await loadArnie();
+    setArnieRefreshing(false);
+  }, [loadArnie]);
+
+  const filteredArnie = arnie.filter((a) => {
+    const query = searchArniaQuery.trim().toLowerCase();
+    if (!query) return true;
+    return (
+      (a.nome_arnia ?? '').toLowerCase().includes(query) ||
+      a.id_nodo.toLowerCase().includes(query) ||
+      (a.posizione ?? '').toLowerCase().includes(query)
+    );
+  });
+
+  const getUserById = useCallback(
+    (id: number) => users.find((u) => u.id === id),
+    [users]
+  );
+
+  const associatedUsers = selectedArnia
+    ? associations
+        .filter((a) => a.id_arnia === selectedArnia.id_arnia)
+        .map((a) => ({ association: a, user: getUserById(a.id_utente) }))
+    : [];
+
+  const availableUsers = selectedArnia
+    ? users.filter(
+        (u) =>
+          !associations.some(
+            (a) => a.id_arnia === selectedArnia.id_arnia && a.id_utente === u.id
+          )
+      )
+    : [];
+
+  const filteredAvailableUsers = availableUsers.filter((u) => {
+    const query = associateSearch.trim().toLowerCase();
+    if (!query) return true;
+    return (
+      u.name.toLowerCase().includes(query) ||
+      u.email.toLowerCase().includes(query)
+    );
+  });
+
+  const handleCreateArnia = async () => {
+    const idNodo = newArniaNodo.trim();
+    const idSensore = newArniaSensore.trim();
+
+    if (!idNodo || !idSensore) {
+      showAlert('Errore', 'Inserisci ID nodo e ID sensore');
+      return;
+    }
+
+    const result = await createAdminArnia({
+      id_nodo: idNodo,
+      id_sensore_fisico: idSensore,
+      nome_arnia: newArniaNome.trim() || null,
+      descrizione: newArniaDescrizione.trim() || null,
+      posizione: newArniaPosizione.trim() || null,
+    });
+
+    if (!result.success) {
+      showAlert('Errore', result.error || "Errore nella creazione dell'arnia");
+      return;
+    }
+
+    setNewArniaNome('');
+    setNewArniaNodo('');
+    setNewArniaSensore('');
+    setNewArniaPosizione('');
+    setNewArniaDescrizione('');
+    await loadArnie();
+    setActiveModal('arnie');
+  };
+
+  const handleDeleteArnia = (arnia: ArniaConStato) => {
+    const doDelete = async () => {
+      const result = await deleteAdminArnia(arnia.id_arnia);
+      if (!result.success) {
+        showAlert('Errore', result.error || "Errore nella disattivazione dell'arnia");
+        return;
+      }
+      setSelectedArnia(null);
+      await loadArnie();
+      setActiveModal('arnie');
+    };
+
+    const message = `Vuoi disattivare l'arnia "${arnia.nome_arnia || arnia.id_nodo}"?`;
+    if (Platform.OS === 'web') {
+      if (window.confirm(message)) doDelete();
+    } else {
+      Alert.alert('Disattiva Arnia', message, [
+        { text: 'Annulla', style: 'cancel' },
+        { text: 'Disattiva', style: 'destructive', onPress: doDelete },
+      ]);
+    }
+  };
+
+  const handleAssociateUser = async (userId: number) => {
+    if (!selectedArnia) return;
+
+    const result = await associateAdminUserArnia({
+      id_utente: userId,
+      id_arnia: selectedArnia.id_arnia,
+    });
+
+    if (!result.success) {
+      showAlert('Errore', result.error || "Errore nell'associazione");
+      return;
+    }
+
+    setAssociateSearch('');
+    await loadArnie();
+    setActiveModal('arnia_detail');
+  };
+
+  const handleRemoveAssociation = (userId: number) => {
+    if (!selectedArnia) return;
+    const arniaId = selectedArnia.id_arnia;
+
+    const doRemove = async () => {
+      const result = await removeAdminUserArnia(userId, arniaId);
+      if (!result.success) {
+        showAlert('Errore', result.error || "Errore nella rimozione dell'associazione");
+        return;
+      }
+      await loadArnie();
+    };
+
+    const user = getUserById(userId);
+    const message = `Rimuovere l'associazione con ${user?.name || `utente ${userId}`}?`;
+    if (Platform.OS === 'web') {
+      if (window.confirm(message)) doRemove();
+    } else {
+      Alert.alert('Rimuovi associazione', message, [
+        { text: 'Annulla', style: 'cancel' },
+        { text: 'Rimuovi', style: 'destructive', onPress: doRemove },
+      ]);
+    }
+  };
+
+  const loadUsers = useCallback(async () => {
+    setUsersLoading(true);
+    setUsersError(null);
+    const result = await loadAdminUsers();
+    if (result.success && result.data) {
+      setUsers(result.data.map(mapUser));
+    } else {
+      setUsers([]);
+      setUsersError(result.error || 'Impossibile caricare gli utenti');
+    }
+    setUsersLoading(false);
+  }, []);
+
+  useEffect(() => {
+    loadUsers();
+  }, [loadUsers]);
+
+  const onRefreshUsers = useCallback(async () => {
+    setUsersRefreshing(true);
+    await loadUsers();
+    setUsersRefreshing(false);
+  }, [loadUsers]);
 
   // Filtered users
   const filteredUsers = users.filter((u) => {
@@ -59,48 +355,72 @@ export default function AdminScreen() {
     );
   });
 
-  const handleCreateUser = () => {
-    if (!newUserName.trim() || !newUserEmail.trim()) {
-      if (Platform.OS === 'web') alert('Inserisci nome ed email');
-      else Alert.alert('Errore', 'Inserisci nome ed email');
+  const handleCreateUser = async () => {
+    const name = newUserName.trim();
+    const email = newUserEmail.trim();
+
+    if (!name || !email) {
+      showAlert('Errore', 'Inserisci nome ed email');
+      return;
+    }
+    if (newUserPassword.length < 8) {
+      showAlert('Errore', 'La password deve contenere almeno 8 caratteri');
       return;
     }
 
-    const parts = newUserName.trim().split(' ');
-    const initials = parts.length > 1
-      ? `${parts[0][0]}${parts[1][0]}`.toUpperCase()
-      : newUserName.slice(0, 2).toUpperCase();
+    const parts = name.split(/\s+/);
+    const nome = parts[0];
+    const cognome = parts.slice(1).join(' ');
 
-    const created: User = {
-      id: Date.now(),
-      name: newUserName.trim(),
-      email: newUserEmail.trim(),
-      role: newUserRole,
-      active: newUserActive,
-      createdAt: new Date().toLocaleDateString('it-IT') + ' 10:00',
-      lastAccess: 'Mai',
-      initials,
-    };
+    const result = await createAdminUser({
+      email,
+      nome,
+      cognome,
+      password: newUserPassword,
+      ruolo: roleToApi(newUserRole),
+    });
 
-    setUsers((prev) => [created, ...prev]);
+    if (!result.success) {
+      showAlert('Errore', result.error || "Errore nella creazione dell'utente");
+      return;
+    }
+
+    if (!newUserActive && result.data) {
+      await updateAdminUser(result.data.id_utente, { attivo: false });
+    }
+
     setNewUserName('');
     setNewUserEmail('');
+    setNewUserPassword('');
     setNewUserRole('Operatore');
     setNewUserActive(true);
+    await loadUsers();
     setActiveModal('users');
   };
 
-  const handleToggleUserStatus = (userId: number) => {
-    setUsers((prev) =>
-      prev.map((u) => (u.id === userId ? { ...u, active: !u.active } : u))
-    );
-    if (selectedUser && selectedUser.id === userId) {
-      setSelectedUser((prev) => (prev ? { ...prev, active: !prev.active } : null));
+  const handleToggleUserStatus = async (userId: number) => {
+    const target = users.find((u) => u.id === userId);
+    if (!target) return;
+
+    const result = await updateAdminUser(userId, { attivo: !target.active });
+
+    if (!result.success || !result.data) {
+      showAlert('Errore', result.error || "Errore nell'aggiornamento dell'utente");
+      return;
     }
+
+    const updated = mapUser(result.data);
+    setUsers((prev) => prev.map((u) => (u.id === userId ? updated : u)));
+    setSelectedUser((prev) => (prev && prev.id === userId ? updated : prev));
   };
 
   const handleDeleteUser = (userId: number) => {
-    const doDelete = () => {
+    const doDelete = async () => {
+      const result = await deleteAdminUser(userId);
+      if (!result.success) {
+        showAlert('Errore', result.error || "Errore nell'eliminazione dell'utente");
+        return;
+      }
       setUsers((prev) => prev.filter((u) => u.id !== userId));
       setSelectedUser(null);
       setActiveModal('users');
@@ -116,6 +436,24 @@ export default function AdminScreen() {
         { text: 'Elimina', style: 'destructive', onPress: doDelete },
       ]);
     }
+  };
+
+  const handleResetPassword = async () => {
+    if (!selectedUser) return;
+    if (resetPassword.length < 8) {
+      showAlert('Errore', 'La password deve contenere almeno 8 caratteri');
+      return;
+    }
+
+    const result = await resetAdminUserPassword(selectedUser.id, resetPassword);
+
+    if (!result.success) {
+      showAlert('Errore', result.error || 'Errore nella reimpostazione della password');
+      return;
+    }
+
+    setResetPassword('');
+    showAlert('Successo', 'Password reimpostata con successo');
   };
 
   const cardBg = isDark ? '#1C1C1E' : '#FFFFFF';
@@ -162,7 +500,7 @@ export default function AdminScreen() {
           <TouchableOpacity
             style={styles.menuItem}
             activeOpacity={0.7}
-            onPress={() => router.push('/(tabs)/arnie' as any)}>
+            onPress={() => setActiveModal('arnie')}>
             <View style={[styles.iconBox, { backgroundColor: '#FFF7ED' }]}>
               <Ionicons name="home" size={22} color="#EA580C" />
             </View>
@@ -267,9 +605,49 @@ export default function AdminScreen() {
             </View>
           </View>
 
-          <ScrollView contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 24 }}>
-            <View style={[styles.menuCard, { backgroundColor: cardBg, borderColor }]}>
-              {filteredUsers.map((u, index) => {
+          <ScrollView
+            contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 24 }}
+            refreshControl={
+              <RefreshControl
+                refreshing={usersRefreshing}
+                onRefresh={onRefreshUsers}
+                tintColor="#2563EB"
+              />
+            }>
+            {usersLoading && users.length === 0 ? (
+              <ActivityIndicator style={{ marginTop: 32 }} color="#2563EB" />
+            ) : usersError ? (
+              <View
+                style={[
+                  styles.menuCard,
+                  styles.emptyState,
+                  { backgroundColor: cardBg, borderColor },
+                ]}>
+                <Ionicons name="cloud-offline-outline" size={28} color="#9CA3AF" />
+                <ThemedText style={[styles.userEmail, { color: textSecondary, marginTop: 8, textAlign: 'center' }]}>
+                  {usersError}
+                </ThemedText>
+                <TouchableOpacity
+                  style={[styles.newButton, { marginTop: 12 }]}
+                  onPress={loadUsers}>
+                  <ThemedText style={styles.newButtonText}>Riprova</ThemedText>
+                </TouchableOpacity>
+              </View>
+            ) : filteredUsers.length === 0 ? (
+              <View
+                style={[
+                  styles.menuCard,
+                  styles.emptyState,
+                  { backgroundColor: cardBg, borderColor },
+                ]}>
+                <Ionicons name="people-outline" size={28} color="#9CA3AF" />
+                <ThemedText style={[styles.userEmail, { color: textSecondary, marginTop: 8 }]}>
+                  {searchUserQuery.trim() ? 'Nessun utente trovato' : 'Nessun utente disponibile'}
+                </ThemedText>
+              </View>
+            ) : (
+              <View style={[styles.menuCard, { backgroundColor: cardBg, borderColor }]}>
+                {filteredUsers.map((u, index) => {
                 const avatarBg =
                   u.role === 'Amministratore'
                     ? '#DBEAFE'
@@ -328,7 +706,8 @@ export default function AdminScreen() {
                   </React.Fragment>
                 );
               })}
-            </View>
+              </View>
+            )}
           </ScrollView>
         </SafeAreaView>
       </Modal>
@@ -410,18 +789,28 @@ export default function AdminScreen() {
                 </View>
               </View>
 
+              {/* Reset password */}
+              <View style={[styles.detailCard, { backgroundColor: cardBg, borderColor, marginTop: 16 }]}>
+                <ThemedText style={styles.sectionLabel}>Reimposta password</ThemedText>
+                <TextInput
+                  style={[styles.formInput, { color: isDark ? '#FFF' : '#000', borderColor, marginTop: 8 }]}
+                  placeholder="Nuova password (min. 8 caratteri)"
+                  placeholderTextColor="#9CA3AF"
+                  secureTextEntry
+                  autoCapitalize="none"
+                  value={resetPassword}
+                  onChangeText={setResetPassword}
+                />
+                <TouchableOpacity
+                  style={[styles.actionBtn, styles.resetBtn, { marginTop: 4 }]}
+                  onPress={handleResetPassword}>
+                  <Ionicons name="key-outline" size={18} color="#2563EB" />
+                  <ThemedText style={styles.resetBtnText}>Imposta nuova password</ThemedText>
+                </TouchableOpacity>
+              </View>
+
               {/* Actions */}
               <View style={{ marginTop: 24, gap: 12 }}>
-                <TouchableOpacity
-                  style={[styles.actionBtn, styles.resetBtn]}
-                  onPress={() => {
-                    if (Platform.OS === 'web') alert('Email di reimpostazione password inviata!');
-                    else Alert.alert('Successo', 'Email di reimpostazione password inviata!');
-                  }}>
-                  <Ionicons name="refresh-outline" size={18} color="#2563EB" />
-                  <ThemedText style={styles.resetBtnText}>Reimposta password</ThemedText>
-                </TouchableOpacity>
-
                 <TouchableOpacity
                   style={[styles.actionBtn, styles.disableBtn]}
                   onPress={() => handleToggleUserStatus(selectedUser.id)}>
@@ -481,9 +870,20 @@ export default function AdminScreen() {
                 onChangeText={setNewUserEmail}
               />
 
+              <ThemedText style={styles.formLabel}>Password</ThemedText>
+              <TextInput
+                style={[styles.formInput, { color: isDark ? '#FFF' : '#000', borderColor }]}
+                placeholder="Minimo 8 caratteri"
+                placeholderTextColor="#9CA3AF"
+                secureTextEntry
+                autoCapitalize="none"
+                value={newUserPassword}
+                onChangeText={setNewUserPassword}
+              />
+
               <ThemedText style={styles.formLabel}>Ruolo</ThemedText>
               <View style={styles.rolePickerRow}>
-                {(['Amministratore', 'Operatore', 'Visualizzatore'] as const).map((r) => (
+                {(['Amministratore', 'Operatore'] as const).map((r) => (
                   <TouchableOpacity
                     key={r}
                     style={[
@@ -525,6 +925,418 @@ export default function AdminScreen() {
                 <ThemedText style={styles.createFooterBtnText}>Crea utente</ThemedText>
               </TouchableOpacity>
             </View>
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+
+      {/* ========================================================================= */}
+      {/* MODAL 7: ARNIE LIST */}
+      {/* ========================================================================= */}
+      <Modal
+        animationType="slide"
+        visible={activeModal === 'arnie'}
+        onRequestClose={() => setActiveModal(null)}>
+        <SafeAreaView style={[styles.safeArea, { backgroundColor: isDark ? '#111213' : '#F9FAFB' }]}>
+          <View style={styles.modalHeader}>
+            <TouchableOpacity onPress={() => setActiveModal(null)} style={styles.backButton}>
+              <Ionicons name="arrow-back" size={24} color={isDark ? '#FFF' : '#111827'} />
+            </TouchableOpacity>
+            <ThemedText style={styles.modalNavTitle}>Arnie</ThemedText>
+            <TouchableOpacity style={styles.newButton} onPress={() => setActiveModal('new_arnia')}>
+              <ThemedText style={styles.newButtonText}>+ Nuova arnia</ThemedText>
+            </TouchableOpacity>
+          </View>
+
+          <View style={{ paddingHorizontal: 16, paddingBottom: 10 }}>
+            <View style={[styles.searchBox, { backgroundColor: cardBg, borderColor }]}>
+              <Ionicons name="search-outline" size={18} color="#9CA3AF" style={{ marginRight: 8 }} />
+              <TextInput
+                style={[styles.searchInput, { color: isDark ? '#FFFFFF' : '#111827' }]}
+                placeholder="Cerca arnia per nome, nodo o posizione..."
+                placeholderTextColor="#9CA3AF"
+                value={searchArniaQuery}
+                onChangeText={setSearchArniaQuery}
+              />
+            </View>
+          </View>
+
+          <ScrollView
+            contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 24 }}
+            refreshControl={
+              <RefreshControl
+                refreshing={arnieRefreshing}
+                onRefresh={onRefreshArnie}
+                tintColor="#2563EB"
+              />
+            }>
+            {arnieLoading && arnie.length === 0 ? (
+              <ActivityIndicator style={{ marginTop: 32 }} color="#2563EB" />
+            ) : arnieError ? (
+              <View
+                style={[
+                  styles.menuCard,
+                  styles.emptyState,
+                  { backgroundColor: cardBg, borderColor },
+                ]}>
+                <Ionicons name="cloud-offline-outline" size={28} color="#9CA3AF" />
+                <ThemedText style={[styles.userEmail, { color: textSecondary, marginTop: 8, textAlign: 'center' }]}>
+                  {arnieError}
+                </ThemedText>
+                <TouchableOpacity style={[styles.newButton, { marginTop: 12 }]} onPress={loadArnie}>
+                  <ThemedText style={styles.newButtonText}>Riprova</ThemedText>
+                </TouchableOpacity>
+              </View>
+            ) : filteredArnie.length === 0 ? (
+              <View
+                style={[
+                  styles.menuCard,
+                  styles.emptyState,
+                  { backgroundColor: cardBg, borderColor },
+                ]}>
+                <Ionicons name="home-outline" size={28} color="#9CA3AF" />
+                <ThemedText style={[styles.userEmail, { color: textSecondary, marginTop: 8 }]}>
+                  {searchArniaQuery.trim() ? 'Nessuna arnia trovata' : 'Nessuna arnia disponibile'}
+                </ThemedText>
+              </View>
+            ) : (
+              <View style={[styles.menuCard, { backgroundColor: cardBg, borderColor }]}>
+                {filteredArnie.map((a, index) => {
+                  const count = associations.filter((x) => x.id_arnia === a.id_arnia).length;
+                  return (
+                    <React.Fragment key={a.id_arnia}>
+                      {index > 0 && <View style={[styles.divider, { backgroundColor: dividerColor }]} />}
+                      <TouchableOpacity
+                        style={styles.userListItem}
+                        onPress={() => {
+                          setSelectedArnia(a);
+                          setActiveModal('arnia_detail');
+                        }}>
+                        <View
+                          style={[
+                            styles.iconBox,
+                            { backgroundColor: a.attiva ? '#FFF7ED' : '#F3F4F6', marginRight: 12 },
+                          ]}>
+                          <Ionicons name="home" size={20} color={a.attiva ? '#EA580C' : '#9CA3AF'} />
+                        </View>
+
+                        <View style={{ flex: 1 }}>
+                          <ThemedText style={styles.userName}>
+                            {a.nome_arnia || `Arnia ${a.id_arnia}`}
+                          </ThemedText>
+                          <ThemedText style={[styles.userEmail, { color: textSecondary }]}>
+                            Nodo: {a.id_nodo}
+                          </ThemedText>
+                          {a.posizione ? (
+                            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
+                              <Ionicons name="location-outline" size={12} color={textSecondary} />
+                              <ThemedText style={[styles.userEmail, { color: textSecondary, marginLeft: 3 }]}>
+                                {a.posizione}
+                              </ThemedText>
+                            </View>
+                          ) : null}
+                          <View style={styles.tagsRow}>
+                            <View style={styles.roleTag}>
+                              <ThemedText style={styles.roleTagText}>
+                                {count} {count === 1 ? 'utente' : 'utenti'}
+                              </ThemedText>
+                            </View>
+                            {!a.attiva && (
+                              <View style={[styles.statusTag, { backgroundColor: '#F3F4F6' }]}>
+                                <ThemedText style={[styles.statusTagText, { color: '#6B7280' }]}>
+                                  Disattiva
+                                </ThemedText>
+                              </View>
+                            )}
+                          </View>
+                        </View>
+
+                        <Ionicons name="chevron-forward" size={18} color="#9CA3AF" />
+                      </TouchableOpacity>
+                    </React.Fragment>
+                  );
+                })}
+              </View>
+            )}
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+
+      {/* ========================================================================= */}
+      {/* MODAL 8: DETTAGLI ARNIA */}
+      {/* ========================================================================= */}
+      <Modal
+        animationType="slide"
+        visible={activeModal === 'arnia_detail'}
+        onRequestClose={() => setActiveModal('arnie')}>
+        <SafeAreaView style={[styles.safeArea, { backgroundColor: isDark ? '#111213' : '#F9FAFB' }]}>
+          <View style={styles.modalHeader}>
+            <TouchableOpacity onPress={() => setActiveModal('arnie')} style={styles.backButton}>
+              <Ionicons name="arrow-back" size={24} color={isDark ? '#FFF' : '#111827'} />
+            </TouchableOpacity>
+            <ThemedText style={styles.modalNavTitle}>Dettagli arnia</ThemedText>
+            <View style={{ width: 40 }} />
+          </View>
+
+          {selectedArnia && (
+            <ScrollView contentContainerStyle={{ padding: 16 }}>
+              {/* Profile Card */}
+              <View style={[styles.detailCard, { backgroundColor: cardBg, borderColor }]}>
+                <View style={styles.detailAvatarRow}>
+                  <View style={[styles.largeUserAvatar, { backgroundColor: '#FFF7ED' }]}>
+                    <Ionicons name="home" size={26} color="#EA580C" />
+                  </View>
+                  <View style={{ flex: 1, marginLeft: 16 }}>
+                    <ThemedText style={styles.detailName}>
+                      {selectedArnia.nome_arnia || `Arnia ${selectedArnia.id_arnia}`}
+                    </ThemedText>
+                    <ThemedText style={[styles.detailEmail, { color: textSecondary }]}>
+                      Nodo: {selectedArnia.id_nodo}
+                    </ThemedText>
+                    <View style={styles.onlineDotRow}>
+                      <View
+                        style={[
+                          styles.statusCircle,
+                          { backgroundColor: selectedArnia.attiva ? '#16A34A' : '#9CA3AF' },
+                        ]}
+                      />
+                      <ThemedText
+                        style={[
+                          styles.statusLabel,
+                          { color: selectedArnia.attiva ? '#16A34A' : '#6B7280' },
+                        ]}>
+                        {selectedArnia.attiva ? 'Attiva' : 'Disattiva'}
+                      </ThemedText>
+                    </View>
+                  </View>
+                </View>
+              </View>
+
+              {/* Attributes Card */}
+              <View style={[styles.detailCard, { backgroundColor: cardBg, borderColor, marginTop: 16 }]}>
+                <ThemedText style={styles.sectionLabel}>Posizione</ThemedText>
+                <ThemedText style={styles.infoValueText}>
+                  {selectedArnia.posizione || 'Non specificata'}
+                </ThemedText>
+
+                <View style={[styles.divider, { backgroundColor: dividerColor, marginVertical: 12 }]} />
+
+                <ThemedText style={styles.sectionLabel}>Sensore fisico</ThemedText>
+                <ThemedText style={styles.infoValueText}>{selectedArnia.id_sensore_fisico}</ThemedText>
+
+                <View style={[styles.divider, { backgroundColor: dividerColor, marginVertical: 12 }]} />
+
+                <ThemedText style={styles.sectionLabel}>Descrizione</ThemedText>
+                <ThemedText style={styles.infoValueText}>
+                  {selectedArnia.descrizione || 'Nessuna descrizione'}
+                </ThemedText>
+              </View>
+
+              {/* Associated users */}
+              <View style={[styles.detailCard, { backgroundColor: cardBg, borderColor, marginTop: 16 }]}>
+                <View style={styles.cardTitleRow}>
+                  <ThemedText style={styles.settingTitle}>Utenti associati</ThemedText>
+                  <TouchableOpacity
+                    style={styles.newButton}
+                    onPress={() => setActiveModal('associate_user')}>
+                    <ThemedText style={styles.newButtonText}>+ Associa</ThemedText>
+                  </TouchableOpacity>
+                </View>
+
+                {associatedUsers.length === 0 ? (
+                  <ThemedText style={[styles.menuItemSubtitle, { color: textSecondary, marginTop: 12 }]}>
+                    Nessun utente associato
+                  </ThemedText>
+                ) : (
+                  associatedUsers.map(({ association, user }) => (
+                    <View
+                      key={association.id}
+                      style={[styles.associatedRow, { borderTopColor: dividerColor }]}>
+                      <View style={[styles.userAvatar, styles.smallAvatar, { backgroundColor: '#DBEAFE' }]}>
+                        <ThemedText style={[styles.userAvatarText, { color: '#2563EB', fontSize: 13 }]}>
+                          {user ? user.initials : '?'}
+                        </ThemedText>
+                      </View>
+                      <View style={{ flex: 1, marginLeft: 10 }}>
+                        <ThemedText style={styles.userName}>
+                          {user ? user.name : `Utente ${association.id_utente}`}
+                        </ThemedText>
+                        <ThemedText style={[styles.userEmail, { color: textSecondary }]}>
+                          {user ? user.email : 'Utente non disponibile'}
+                        </ThemedText>
+                      </View>
+                      <TouchableOpacity
+                        onPress={() => handleRemoveAssociation(association.id_utente)}
+                        style={styles.removeBtn}>
+                        <Ionicons name="close-circle" size={24} color="#EF4444" />
+                      </TouchableOpacity>
+                    </View>
+                  ))
+                )}
+              </View>
+
+              <TouchableOpacity
+                style={[styles.actionBtn, styles.deleteActionBtn, { marginTop: 24 }]}
+                onPress={() => handleDeleteArnia(selectedArnia)}>
+                <Ionicons name="trash-outline" size={18} color="#EF4444" />
+                <ThemedText style={styles.deleteActionBtnText}>Disattiva arnia</ThemedText>
+              </TouchableOpacity>
+            </ScrollView>
+          )}
+        </SafeAreaView>
+      </Modal>
+
+      {/* ========================================================================= */}
+      {/* MODAL 9: NUOVA ARNIA */}
+      {/* ========================================================================= */}
+      <Modal
+        animationType="slide"
+        visible={activeModal === 'new_arnia'}
+        onRequestClose={() => setActiveModal('arnie')}>
+        <SafeAreaView style={[styles.safeArea, { backgroundColor: isDark ? '#111213' : '#F9FAFB' }]}>
+          <View style={styles.modalHeader}>
+            <TouchableOpacity onPress={() => setActiveModal('arnie')} style={styles.backButton}>
+              <Ionicons name="arrow-back" size={24} color={isDark ? '#FFF' : '#111827'} />
+            </TouchableOpacity>
+            <ThemedText style={styles.modalNavTitle}>Nuova arnia</ThemedText>
+            <View style={{ width: 40 }} />
+          </View>
+
+          <ScrollView contentContainerStyle={{ padding: 16 }}>
+            <View style={[styles.detailCard, { backgroundColor: cardBg, borderColor }]}>
+              <ThemedText style={styles.formLabel}>Nome arnia</ThemedText>
+              <TextInput
+                style={[styles.formInput, { color: isDark ? '#FFF' : '#000', borderColor }]}
+                placeholder="Es. Arnia Nord"
+                placeholderTextColor="#9CA3AF"
+                value={newArniaNome}
+                onChangeText={setNewArniaNome}
+              />
+
+              <ThemedText style={styles.formLabel}>ID nodo *</ThemedText>
+              <TextInput
+                style={[styles.formInput, { color: isDark ? '#FFF' : '#000', borderColor }]}
+                placeholder="Es. NODE-01"
+                placeholderTextColor="#9CA3AF"
+                autoCapitalize="characters"
+                value={newArniaNodo}
+                onChangeText={setNewArniaNodo}
+              />
+
+              <ThemedText style={styles.formLabel}>ID sensore fisico *</ThemedText>
+              <TextInput
+                style={[styles.formInput, { color: isDark ? '#FFF' : '#000', borderColor }]}
+                placeholder="Es. SENSOR-01"
+                placeholderTextColor="#9CA3AF"
+                autoCapitalize="characters"
+                value={newArniaSensore}
+                onChangeText={setNewArniaSensore}
+              />
+
+              <ThemedText style={styles.formLabel}>Posizione</ThemedText>
+              <TextInput
+                style={[styles.formInput, { color: isDark ? '#FFF' : '#000', borderColor }]}
+                placeholder="Es. Fila 2, apiario nord"
+                placeholderTextColor="#9CA3AF"
+                value={newArniaPosizione}
+                onChangeText={setNewArniaPosizione}
+              />
+
+              <ThemedText style={styles.formLabel}>Descrizione</ThemedText>
+              <TextInput
+                style={[styles.formInput, { color: isDark ? '#FFF' : '#000', borderColor }]}
+                placeholder="Note opzionali"
+                placeholderTextColor="#9CA3AF"
+                value={newArniaDescrizione}
+                onChangeText={setNewArniaDescrizione}
+              />
+            </View>
+
+            <View style={styles.modalFooterButtons}>
+              <TouchableOpacity
+                style={[styles.footerBtn, styles.cancelFooterBtn]}
+                onPress={() => setActiveModal('arnie')}>
+                <ThemedText style={styles.cancelFooterBtnText}>Annulla</ThemedText>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.footerBtn, styles.createFooterBtn]}
+                onPress={handleCreateArnia}>
+                <ThemedText style={styles.createFooterBtnText}>Crea arnia</ThemedText>
+              </TouchableOpacity>
+            </View>
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+
+      {/* ========================================================================= */}
+      {/* MODAL 10: ASSOCIA UTENTE */}
+      {/* ========================================================================= */}
+      <Modal
+        animationType="slide"
+        visible={activeModal === 'associate_user'}
+        onRequestClose={() => setActiveModal('arnia_detail')}>
+        <SafeAreaView style={[styles.safeArea, { backgroundColor: isDark ? '#111213' : '#F9FAFB' }]}>
+          <View style={styles.modalHeader}>
+            <TouchableOpacity onPress={() => setActiveModal('arnia_detail')} style={styles.backButton}>
+              <Ionicons name="arrow-back" size={24} color={isDark ? '#FFF' : '#111827'} />
+            </TouchableOpacity>
+            <ThemedText style={styles.modalNavTitle}>Associa utente</ThemedText>
+            <View style={{ width: 40 }} />
+          </View>
+
+          <View style={{ paddingHorizontal: 16, paddingBottom: 10 }}>
+            <View style={[styles.searchBox, { backgroundColor: cardBg, borderColor }]}>
+              <Ionicons name="search-outline" size={18} color="#9CA3AF" style={{ marginRight: 8 }} />
+              <TextInput
+                style={[styles.searchInput, { color: isDark ? '#FFFFFF' : '#111827' }]}
+                placeholder="Cerca utente..."
+                placeholderTextColor="#9CA3AF"
+                value={associateSearch}
+                onChangeText={setAssociateSearch}
+              />
+            </View>
+          </View>
+
+          <ScrollView contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 24 }}>
+            {filteredAvailableUsers.length === 0 ? (
+              <View
+                style={[
+                  styles.menuCard,
+                  styles.emptyState,
+                  { backgroundColor: cardBg, borderColor },
+                ]}>
+                <Ionicons name="people-outline" size={28} color="#9CA3AF" />
+                <ThemedText style={[styles.userEmail, { color: textSecondary, marginTop: 8 }]}>
+                  {associateSearch.trim()
+                    ? 'Nessun utente trovato'
+                    : 'Tutti gli utenti sono già associati'}
+                </ThemedText>
+              </View>
+            ) : (
+              <View style={[styles.menuCard, { backgroundColor: cardBg, borderColor }]}>
+                {filteredAvailableUsers.map((u, index) => (
+                  <React.Fragment key={u.id}>
+                    {index > 0 && <View style={[styles.divider, { backgroundColor: dividerColor }]} />}
+                    <TouchableOpacity
+                      style={styles.userListItem}
+                      onPress={() => handleAssociateUser(u.id)}>
+                      <View style={[styles.userAvatar, { backgroundColor: '#DBEAFE' }]}>
+                        <ThemedText style={[styles.userAvatarText, { color: '#2563EB' }]}>
+                          {u.initials}
+                        </ThemedText>
+                      </View>
+                      <View style={{ flex: 1, marginLeft: 12 }}>
+                        <ThemedText style={styles.userName}>{u.name}</ThemedText>
+                        <ThemedText style={[styles.userEmail, { color: textSecondary }]}>
+                          {u.email}
+                        </ThemedText>
+                      </View>
+                      <Ionicons name="add-circle-outline" size={22} color="#2563EB" />
+                    </TouchableOpacity>
+                  </React.Fragment>
+                ))}
+              </View>
+            )}
           </ScrollView>
         </SafeAreaView>
       </Modal>
@@ -690,6 +1502,11 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 2,
   },
+  emptyState: {
+    padding: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   menuItem: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -854,6 +1671,27 @@ const styles = StyleSheet.create({
   statusLabel: {
     fontSize: 13,
     fontWeight: '600',
+  },
+  cardTitleRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  associatedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderTopWidth: 1,
+    marginTop: 12,
+  },
+  smallAvatar: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+  },
+  removeBtn: {
+    padding: 4,
+    marginLeft: 8,
   },
   sectionLabel: {
     fontSize: 13,
