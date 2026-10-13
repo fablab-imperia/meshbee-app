@@ -238,8 +238,21 @@ export default function ArnieScreen() {
   } | null>(null);
   const chartPressRef = useRef<any>(null);
 
+  // Finestra di zoom sul grafico (timestamp in ms). null = nessuno zoom: si vede
+  // l'intero periodo. Serve quando i punti sono tanti e le palline si accavallano.
+  const [zoomWindow, setZoomWindow] = useState<{ start: number; end: number } | null>(null);
+  // Selezione in corso di trascinamento sul grafico (coordinate X in pixel).
+  const [selection, setSelection] = useState<{ startX: number; endX: number } | null>(null);
+  const dragRef = useRef<{ startX: number; startY: number; endX: number; moved: boolean } | null>(
+    null
+  );
+
+  // Impercettibile sotto questa soglia: è un tap (tooltip), non un trascinamento (zoom).
+  const DRAG_THRESHOLD = 8;
+
   useEffect(() => {
     setChartSelected(null);
+    setZoomWindow(null);
   }, [selectedMetric, selectedRange, selectedHiveId]);
 
   const onRefresh = async () => {
@@ -392,11 +405,21 @@ export default function ArnieScreen() {
     if (timeSeries.length === 0) return [];
 
     const hours = RANGE_TO_HOURS[selectedRange];
-    if (hours == null) return timeSeries;
-    const lastTs = new Date(timeSeries[timeSeries.length - 1].timestamp).getTime();
-    const cutoff = lastTs - hours * 3600 * 1000;
-    return timeSeries.filter((p) => new Date(p.timestamp).getTime() >= cutoff);
-  }, [chartSeries, selectedRange]);
+    let ranged = timeSeries;
+    if (hours != null) {
+      const lastTs = new Date(timeSeries[timeSeries.length - 1].timestamp).getTime();
+      const cutoff = lastTs - hours * 3600 * 1000;
+      ranged = timeSeries.filter((p) => new Date(p.timestamp).getTime() >= cutoff);
+    }
+
+    // Lo zoom restringe ulteriormente il periodo: le statistiche, i punti e le
+    // guide delle note seguono così la porzione effettivamente inquadrata.
+    if (!zoomWindow) return ranged;
+    return ranged.filter((p) => {
+      const ts = new Date(p.timestamp).getTime();
+      return ts >= zoomWindow.start && ts <= zoomWindow.end;
+    });
+  }, [chartSeries, selectedRange, zoomWindow]);
 
   // Ultima lettura disponibile, per distinguere "periodo vuoto" da "nessun dato".
   const lastReadingAt = useMemo(() => {
@@ -661,13 +684,8 @@ export default function ArnieScreen() {
     );
   };
 
-  // Tap on the chart to show the closest data point tooltip (works on native + web)
-  const handleChartPress = (event: any) => {
-    if (chartPoints.length === 0) {
-      setChartSelected(null);
-      return;
-    }
-
+  // Coordinate locali del tocco sul grafico (funziona su native e web).
+  const getLocalPoint = (event: any): { x: number; y: number } | null => {
     const nativeEvent = event.nativeEvent ?? event;
     let locX = nativeEvent.locationX;
     let locY = nativeEvent.locationY;
@@ -679,7 +697,22 @@ export default function ArnieScreen() {
       locY = nativeEvent.clientY - rect.top;
     }
 
-    if (locX == null || locY == null) return;
+    if (locX == null || locY == null) return null;
+    return { x: locX, y: locY };
+  };
+
+  // Tap on the chart to show the closest data point tooltip (works on native + web)
+  const handleChartPress = (event: any) => {
+    dragRef.current = null;
+    setSelection(null);
+    if (chartPoints.length === 0) {
+      setChartSelected(null);
+      return;
+    }
+
+    const point = getLocalPoint(event);
+    if (!point) return;
+    const { x: locX, y: locY } = point;
 
     // Con X posizionato sul tempo i punti non sono equidistanti: il passo medio
     // serve solo come tolleranza, il confronto vero resta la distanza punto-punto.
@@ -714,6 +747,88 @@ export default function ArnieScreen() {
     } else {
       setChartSelected(null);
     }
+  };
+
+  // Trascinamento sul grafico: il rettangolo disegnato diventa la nuova finestra di
+  // zoom. Un tap senza spostamento resta un tap (tooltip).
+  const handleChartPressIn = (event: any) => {
+    const point = getLocalPoint(event);
+    if (!point) return;
+    dragRef.current = { startX: point.x, startY: point.y, endX: point.x, moved: false };
+    setChartSelected(null);
+    setSelection({ startX: point.x, endX: point.x });
+  };
+
+  // Rilevato solo nello strato di capture: rivendichiamo il gesto al contenitore
+  // soltanto quando è orizzontale (zoom). Il gesto verticale resta allo ScrollView.
+  const handleChartMoveShouldCapture = (event: any) => {
+    const drag = dragRef.current;
+    if (!drag) return false;
+    const point = getLocalPoint(event);
+    if (!point) return false;
+    const dx = Math.abs(point.x - drag.startX);
+    const dy = Math.abs(point.y - drag.startY);
+    if (dx > DRAG_THRESHOLD && dx > dy) {
+      drag.moved = true;
+      drag.endX = point.x;
+      setSelection({ startX: drag.startX, endX: point.x });
+      return true;
+    }
+    return false;
+  };
+
+  const handleChartResponderMove = (event: any) => {
+    const drag = dragRef.current;
+    if (!drag) return;
+    const point = getLocalPoint(event);
+    if (!point) return;
+    if (Math.abs(point.x - drag.startX) > DRAG_THRESHOLD) drag.moved = true;
+    drag.endX = point.x;
+    setSelection({ startX: drag.startX, endX: point.x });
+  };
+
+  const handleChartResponderRelease = (event: any) => {
+    const drag = dragRef.current;
+    dragRef.current = null;
+    setSelection(null);
+
+    // Se non c'è stato trascinamento il tap è già gestito dal Pressable (tooltip).
+    if (!drag || !drag.moved) return;
+    if (filteredSeries.length === 0) return;
+
+    const lo = Math.min(drag.startX, drag.endX);
+    const hi = Math.max(drag.startX, drag.endX);
+    if (hi - lo < DRAG_THRESHOLD * 2) return;
+
+    // La X è tempo: si converte il rettangolo in un intervallo temporale e si
+    // tiene un margine per includere le letture che cadono ai bordi.
+    const firstTs = new Date(filteredSeries[0].timestamp).getTime();
+    const lastTs = new Date(filteredSeries[filteredSeries.length - 1].timestamp).getTime();
+    const span = lastTs - firstTs;
+    if (!isFinite(firstTs) || !isFinite(lastTs) || span <= 0) return;
+
+    const xToTime = (x: number) => {
+      const ratio = Math.max(0, Math.min(1, (x - paddingX) / plotWidth));
+      return firstTs + ratio * span;
+    };
+    const start = xToTime(lo);
+    const end = xToTime(hi);
+
+    // Sotto le due letture lo zoom mostrerebbe una curva vuota: meglio ignorarlo.
+    const inside = filteredSeries.filter((p) => {
+      const ts = new Date(p.timestamp).getTime();
+      return ts >= start && ts <= end;
+    }).length;
+    if (inside < 2) return;
+
+    setZoomWindow({ start, end });
+  };
+
+  // Lo ScrollView ha ripreso il gesto (scroll verticale): annulla la selezione.
+  const handleChartResponderTerminate = () => {
+    dragRef.current = null;
+    setSelection(null);
+    setChartSelected(null);
   };
 
   // Detail view status
@@ -1208,9 +1323,21 @@ export default function ArnieScreen() {
                     ? 'Andamento peso'
                     : 'Andamento umidità'}
                 </ThemedText>
-                {chartSeriesLoading ? (
-                  <ActivityIndicator size="small" color={chartLineColor} />
-                ) : null}
+                <View style={styles.chartTitleActions}>
+                  {zoomWindow ? (
+                    <TouchableOpacity
+                      style={styles.zoomResetBtn}
+                      onPress={() => setZoomWindow(null)}
+                      activeOpacity={0.7}
+                      accessibilityLabel="Reimposta zoom">
+                      <Ionicons name="contract-outline" size={14} color="#2563EB" />
+                      <ThemedText style={styles.zoomResetText}>Reset zoom</ThemedText>
+                    </TouchableOpacity>
+                  ) : null}
+                  {chartSeriesLoading ? (
+                    <ActivityIndicator size="small" color={chartLineColor} />
+                  ) : null}
+                </View>
               </View>
 
               {filteredSeries.length === 0 ? (
@@ -1238,8 +1365,19 @@ export default function ArnieScreen() {
               {/* SVG Smooth Curve Graph */}
               <View style={styles.svgGraphContainer}>
                 <View style={[styles.chartPlotWrap, { width: chartWidth }]}>
-                  <Pressable
+                  <View
                     ref={chartPressRef}
+                    // Il gesto orizzontale viene rivendicato in capture per lo zoom;
+                    // quello verticale non viene intercettato e resta allo ScrollView.
+                    onMoveShouldSetResponderCapture={handleChartMoveShouldCapture}
+                    onMoveShouldSetResponder={handleChartMoveShouldCapture}
+                    onResponderMove={handleChartResponderMove}
+                    onResponderRelease={handleChartResponderRelease}
+                    onResponderTerminationRequest={() => true}
+                    onResponderTerminate={handleChartResponderTerminate}
+                    style={{ width: chartWidth }}>
+                  <Pressable
+                    onPressIn={handleChartPressIn}
                     onPress={handleChartPress}
                     style={{ width: chartWidth }}>
                   <Svg width={chartWidth} height={chartHeight}>
@@ -1326,6 +1464,25 @@ export default function ArnieScreen() {
                   ))}
                 </Svg>
                   </Pressable>
+                  </View>
+
+                {/* Rettangolo di selezione durante il trascinamento per lo zoom */}
+                {selection
+                  ? (() => {
+                      const lo = Math.max(paddingX, Math.min(selection.startX, selection.endX));
+                      const hi = Math.min(chartWidth - 10, Math.max(selection.startX, selection.endX));
+                      if (hi - lo < 1) return null;
+                      return (
+                        <View
+                          pointerEvents="none"
+                          style={[
+                            styles.chartSelection,
+                            { left: lo, width: hi - lo, height: chartHeight },
+                          ]}
+                        />
+                      );
+                    })()
+                  : null}
 
                 {/* Note markers clickable overlay */}
                 {noteMarkers.map((m) => (
@@ -1383,6 +1540,15 @@ export default function ArnieScreen() {
                   </ThemedText>
                 ))}
               </View>
+
+              {/* Suggerimento zoom: utile solo quando i punti rischiano di sovrapporsi */}
+              {zoomWindow || filteredSeries.length > 40 ? (
+                <ThemedText style={[styles.chartZoomHint, { color: textSecondary }]}>
+                  {zoomWindow
+                    ? 'Zoom attivo — trascina per restringere ancora'
+                    : 'Trascina sul grafico per ingrandire una porzione'}
+                </ThemedText>
+              ) : null}
               </>
               )}
 
@@ -1965,46 +2131,68 @@ function BeehiveMap({ latitude, longitude }: { latitude: number; longitude: numb
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
   const screenWidth = Dimensions.get('window').width;
-  const mapWidth = Math.min(Math.max(screenWidth - 32, 280), 400);
+  // La mappa vive dentro chartCard (padding 16) a sua volta dentro scrollContent
+  // (paddingHorizontal 16): lo spazio utile è screenWidth - 64, come per il grafico.
+  const mapWidth = Math.min(Math.max(screenWidth - 64, 280), 400);
   const mapHeight = 220;
   const dLon = 0.012;
   const dLat = 0.008;
+  // La mappa arriva via rete (iframe su web, WebView su native): finché il
+  // contenuto non è pronto mostriamo un placeholder per evitare il riquadro vuoto.
+  const [loaded, setLoaded] = useState(false);
 
   const embedUrl =
     `https://www.openstreetmap.org/export/embed.html?` +
     `bbox=${longitude - dLon}%2C${latitude - dLat}%2C${longitude + dLon}%2C${latitude + dLat}` +
     `&layer=mapnik&marker=${latitude}%2C${longitude}`;
 
+  const containerStyle = {
+    width: mapWidth,
+    height: mapHeight,
+    borderRadius: 14,
+    overflow: 'hidden' as const,
+    position: 'relative' as const,
+    backgroundColor: isDark ? '#1F2937' : '#E5E7EB',
+  };
+
+  const loadingPlaceholder = loaded ? null : (
+    <View
+      pointerEvents="none"
+      style={{
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        backgroundColor: isDark ? '#1F2937' : '#E5E7EB',
+      }}>
+      <ActivityIndicator size="small" color="#2563EB" />
+      <ThemedText style={{ fontSize: 13, opacity: 0.7 }}>Caricamento mappa...</ThemedText>
+    </View>
+  );
+
   if (Platform.OS === 'web') {
     return (
-      <View
-        style={{
-          width: mapWidth,
-          height: mapHeight,
-          borderRadius: 14,
-          overflow: 'hidden',
-          backgroundColor: isDark ? '#1F2937' : '#E5E7EB',
-        }}>
+      <View style={containerStyle}>
         {createElement('iframe', {
           src: embedUrl,
           title: 'Mappa OpenStreetMap',
           loading: 'lazy',
+          onLoad: () => setLoaded(true),
           style: { width: '100%', height: '100%', border: 0 },
         })}
+        {loadingPlaceholder}
       </View>
     );
   }
 
   return (
-    <View
-      style={{
-        width: mapWidth,
-        height: mapHeight,
-        borderRadius: 14,
-        overflow: 'hidden',
-        backgroundColor: isDark ? '#1F2937' : '#E5E7EB',
-      }}>
-      <WebView source={{ uri: embedUrl }} style={{ flex: 1 }} />
+    <View style={containerStyle}>
+      <WebView source={{ uri: embedUrl }} style={{ flex: 1 }} onLoadEnd={() => setLoaded(true)} />
+      {loadingPlaceholder}
     </View>
   );
 }
@@ -2438,6 +2626,26 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
   },
+  chartTitleActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  zoomResetBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#2563EB',
+  },
+  zoomResetText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#2563EB',
+  },
   svgGraphContainer: {
     alignItems: 'center',
     justifyContent: 'center',
@@ -2445,6 +2653,14 @@ const styles = StyleSheet.create({
   },
   chartPlotWrap: {
     position: 'relative',
+  },
+  chartSelection: {
+    position: 'absolute',
+    top: 0,
+    backgroundColor: 'rgba(37, 99, 235, 0.15)',
+    borderLeftWidth: 1,
+    borderRightWidth: 1,
+    borderColor: '#2563EB',
   },
   noteMarker: {
     position: 'absolute',
@@ -2523,6 +2739,12 @@ const styles = StyleSheet.create({
   },
   xAxisTextMid: {
     textAlign: 'center',
+  },
+  chartZoomHint: {
+    fontSize: 11,
+    textAlign: 'center',
+    marginTop: -6,
+    marginBottom: 12,
   },
   statsSummaryRow: {
     flexDirection: 'row',

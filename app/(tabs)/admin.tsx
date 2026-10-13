@@ -111,7 +111,6 @@ export default function AdminScreen() {
     | 'associate_user'
     | 'system'
     | 'logs'
-    | 'backup'
     | null
   >(null);
 
@@ -546,25 +545,6 @@ export default function AdminScreen() {
               <ThemedText style={styles.menuItemTitle}>Registro attività</ThemedText>
               <ThemedText style={[styles.menuItemSubtitle, { color: textSecondary }]}>
                 Visualizza log e attività
-              </ThemedText>
-            </View>
-            <Ionicons name="chevron-forward" size={18} color="#9CA3AF" />
-          </TouchableOpacity>
-
-          <View style={[styles.divider, { backgroundColor: dividerColor }]} />
-
-          {/* 5. Backup e dati */}
-          <TouchableOpacity
-            style={styles.menuItem}
-            activeOpacity={0.7}
-            onPress={() => setActiveModal('backup')}>
-            <View style={[styles.iconBox, { backgroundColor: '#EEF2FF' }]}>
-              <Ionicons name="cloud-download" size={22} color="#4F46E5" />
-            </View>
-            <View style={styles.menuItemContent}>
-              <ThemedText style={styles.menuItemTitle}>Backup e dati</ThemedText>
-              <ThemedText style={[styles.menuItemSubtitle, { color: textSecondary }]}>
-                Gestisci backup e esportazioni
               </ThemedText>
             </View>
             <Ionicons name="chevron-forward" size={18} color="#9CA3AF" />
@@ -1421,52 +1401,6 @@ export default function AdminScreen() {
         </SafeAreaView>
       </Modal>
 
-      {/* ========================================================================= */}
-      {/* MODAL 6: BACKUP E DATI */}
-      {/* ========================================================================= */}
-      <Modal
-        animationType="slide"
-        visible={activeModal === 'backup'}
-        onRequestClose={() => setActiveModal(null)}>
-        <SafeAreaView style={[styles.safeArea, { backgroundColor: isDark ? '#111213' : '#F9FAFB' }]}>
-          <View style={styles.modalHeader}>
-            <TouchableOpacity onPress={() => setActiveModal(null)} style={styles.backButton}>
-              <Ionicons name="arrow-back" size={24} color={isDark ? '#FFF' : '#111827'} />
-            </TouchableOpacity>
-            <ThemedText style={styles.modalNavTitle}>Backup e dati</ThemedText>
-            <View style={{ width: 40 }} />
-          </View>
-
-          <ScrollView contentContainerStyle={{ padding: 16 }}>
-            <View style={[styles.detailCard, { backgroundColor: cardBg, borderColor }]}>
-              <ThemedText style={styles.settingTitle}>Esportazione Dati Telemetria</ThemedText>
-              <ThemedText style={[styles.menuItemSubtitle, { color: textSecondary, marginBottom: 16 }]}>
-                Scarica i dati storici dei sensori in formato CSV o JSON.
-              </ThemedText>
-
-              <TouchableOpacity
-                style={[styles.actionBtn, styles.resetBtn, { marginBottom: 10 }]}
-                onPress={() => {
-                  if (Platform.OS === 'web') alert('Download esportazione CSV avviato!');
-                  else Alert.alert('Esportazione', 'File CSV generato con successo.');
-                }}>
-                <Ionicons name="document-text-outline" size={18} color="#2563EB" />
-                <ThemedText style={styles.resetBtnText}>Esporta Dati in CSV</ThemedText>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[styles.actionBtn, styles.resetBtn]}
-                onPress={() => {
-                  if (Platform.OS === 'web') alert('Backup JSON completato!');
-                  else Alert.alert('Backup', 'Database esportato con successo.');
-                }}>
-                <Ionicons name="code-download-outline" size={18} color="#2563EB" />
-                <ThemedText style={styles.resetBtnText}>Backup Completo JSON</ThemedText>
-              </TouchableOpacity>
-            </View>
-          </ScrollView>
-        </SafeAreaView>
-      </Modal>
     </SafeAreaView>
   );
 }
