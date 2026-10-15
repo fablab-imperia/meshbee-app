@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useCallback, useState, useMemo } from 'react';
 import {
   ActivityIndicator,
   RefreshControl,
@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Ionicons from '@expo/vector-icons/Ionicons';
+import { useFocusEffect } from 'expo-router';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -81,10 +82,6 @@ export default function NoteScreen() {
   const isDark = colorScheme === 'dark';
   const { height: windowHeight } = useWindowDimensions();
   const modalHeight = Math.round(windowHeight * 0.8);
-
-  useEffect(() => {
-    loadAllNotes();
-  }, []);
 
   const loadAllNotes = async () => {
     try {
@@ -156,6 +153,12 @@ export default function NoteScreen() {
     await loadAllNotes();
     setRefreshing(false);
   };
+
+  useFocusEffect(
+    useCallback(() => {
+      loadAllNotes();
+    }, [])
+  );
 
   const handleOpenCreateModal = () => {
     const now = new Date();
